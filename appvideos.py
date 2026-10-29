@@ -732,7 +732,7 @@ function scriptPrompt(topic) {
 Crie o roteiro de um vídeo animado.
 Finalidade: ${pur}
 Tema / pedido do cliente: ${topic}
-Duração total: ${P.duration} segundos, em ${n} cenas.
+${P.styleDesc ? "Serviço ou produto do cliente (use estas informações reais: o que é, o que faz, para quem, diferenciais, preço e contato; NÃO invente dados que não estão aqui): " + P.styleDesc + "\n" : ""}Duração total: ${P.duration} segundos, em ${n} cenas.
 Formato: ${P.format}. Estilo visual: ${STYLES[P.style]?.name}.
 Idioma da narração e dos títulos: ${lang}.
 
@@ -967,7 +967,8 @@ const VIEWS = [
 
   () => head(5, "Escreva o texto ou deixe a IA criar", "Cada cena tem um título que aparece grande na tela e a fala da narração.") +
     `<div class="gen-card"><h3>✨ A IA cria o roteiro</h3><p class="mon-note" style="margin:0">${engineName() ? `Usando <b>${engineName()}</b>. Diga o tema e o que não pode faltar.` : ENV.hostAI ? `O roteiro com IA (${esc(ENV.hostAI)}) é gerado no <b>topo da página</b>, acima do estúdio. As cenas aparecem aqui para você editar.` : "Nenhuma IA conectada: vou montar um roteiro-modelo. Para roteiros de verdade, cole a chave da Groq em <b>Chaves de IA</b> (versão para computador)."}</p>
-      <div class="ai-box"><input id="topic" type="text" placeholder="Ex.: Promoção de pizza de sexta, 2 por R$ 79" value="${esc(P.topic || "")}"><button class="btn primary" id="aiBtn" ${aiBusy ? "disabled" : ""}>${aiBusy ? "Escrevendo…" : "Gerar roteiro"}</button>${aiBusy && ENV.sample ? `<button class="btn" id="aiStop">Parar</button>` : ""}</div></div>` +
+      <label class="f" for="styleDesc">Descreva o seu serviço ou produto<textarea id="styleDesc" rows="3" placeholder="O que é, o que faz, para quem é, diferenciais, preço e contato. Ex.: Pizzaria do Zé, delivery em Campinas, massa de fermentação natural, 2 pizzas grandes por R$ 79 às sextas, pedidos pelo WhatsApp (19) 99999-0000">${esc(P.styleDesc || "")}</textarea></label>
+      <div class="ai-box"><input id="topic" type="text" placeholder="Tema. Ex.: Promoção de pizza de sexta, 2 por R$ 79" value="${esc(P.topic || "")}" aria-label="Tema do vídeo"><button class="btn primary" id="aiBtn" ${aiBusy ? "disabled" : ""}>${aiBusy ? "Escrevendo…" : "Gerar roteiro"}</button>${aiBusy && ENV.sample ? `<button class="btn" id="aiStop">Parar</button>` : ""}</div></div>` +
     `<div class="scenes" id="sceneList">${P.scenes.map((s, i) => sceneCard(s, i)).join("")}</div>` +
     `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="addScene">+ Adicionar cena</button></div>`,
 
@@ -1115,6 +1116,7 @@ document.addEventListener("input", e => {
   if (t.id === "pname") { P.name = t.value; $("#projName").textContent = "· " + (P.name || "Sem nome"); save(); }
   if (t.id === "brand") { P.brand = t.value; save(); if (!player.playing) renderFrame(player.t); }
   if (t.id === "topic") { P.topic = t.value; save(); }
+  if (t.id === "styleDesc") { P.styleDesc = t.value; save(); }
   if (t.id === "rate") { P.voice.rate = +t.value; save(); const l = t.closest("label"); if (l) l.firstChild.textContent = `Velocidade: ${(+t.value).toFixed(1)}×`; }
 });
 document.addEventListener("change", async e => {
@@ -1195,6 +1197,9 @@ if (INJ && Array.isArray(INJ.scenes) && INJ.scenes.length && INJ.nonce && store.
     const np = sampleProject();
     np.name = String(INJ.topic || "Novo vídeo").slice(0, 60); np.topic = INJ.topic || "";
     if (INJ.purpose) { np.purpose = INJ.purpose; const pp = PURPOSES.find(p => p.id === INJ.purpose); if (pp) { np.style = pp.style; np.music = pp.music; } }
+    if (INJ.style && STYLES[INJ.style]) np.style = INJ.style;
+    np.styleDesc = INJ.styleDesc || "";
+    np.brand = "";
     if (INJ.duration) np.duration = INJ.duration;
     if (INJ.format) np.format = INJ.format;
     if (INJ.lang) np.voice.lang = INJ.lang;
@@ -1235,6 +1240,8 @@ header[data-testid="stHeader"]{background:transparent}
 [data-testid="stCaptionContainer"]{opacity:.7}
 [data-testid="stForm"]{background:#1a1724;border:1px solid #332d45;border-radius:16px}
 [data-baseweb="input"],[data-baseweb="input"]>div,[data-baseweb="base-input"],.stApp input,[data-baseweb="select"]>div,[data-baseweb="select"]>div>div{background-color:#100e17!important;border-color:#332d45!important}
+[data-baseweb="textarea"],[data-baseweb="textarea"]>div,.stApp textarea{background-color:#100e17!important;border-color:#332d45!important;color:#efeaf7!important;-webkit-text-fill-color:#efeaf7}
+.stApp textarea::placeholder{color:#7d7592!important;-webkit-text-fill-color:#7d7592!important;opacity:1}
 .stApp input::placeholder{color:#7d7592!important;-webkit-text-fill-color:#7d7592!important;opacity:1}
 .stApp input{color:#efeaf7!important;-webkit-text-fill-color:#efeaf7}
 [data-baseweb="select"] div{color:#efeaf7;background-color:#100e17!important}
@@ -1253,19 +1260,24 @@ PURPOSES = {
 }
 FORMATS = {"Vertical 9:16": "9:16", "Horizontal 16:9": "16:9", "Quadrado 1:1": "1:1"}
 LANGS = {"Português": "pt-BR", "Inglês": "en-US", "Espanhol": "es-ES"}
+VISUAIS = {
+    "Automático (pela finalidade)": "", "Vibrante": "vibrante", "Neon": "neon", "Lousa e giz": "giz",
+    "Aquarela": "aquarela", "Cinema": "cinema", "Infantil": "infantil", "Empresa": "empresa",
+}
 
 
 GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 
 
-def build_prompt(topic, purpose_name, duration, fmt, lang_name):
+def build_prompt(topic, purpose_name, duration, fmt, lang_name, style_desc="", visual_name=""):
     n = max(3, min(10, round(duration / 7)))
     return f"""Você é roteirista de vídeos curtos para redes sociais.
 Crie o roteiro de um vídeo animado.
 Finalidade: {purpose_name}
 Tema / pedido do cliente: {topic}
+Serviço ou produto do cliente (use estas informações reais: o que é, o que faz, para quem, diferenciais, preço e contato; NÃO invente dados que não estão aqui): {style_desc or "não informado"}
 Duração total: {duration} segundos, em {n} cenas.
-Formato: {fmt}.
+Formato: {fmt}.{(" Estilo visual da animação: " + visual_name + ".") if visual_name else ""}
 Idioma da narração e dos títulos: {lang_name}.
 
 Regras:
@@ -1416,11 +1428,18 @@ if cb.button("Sair", use_container_width=True):
 
 with st.form("roteiro"):
     topic = st.text_input("Tema do vídeo", placeholder="Ex.: Promoção de pizza de sexta, 2 por R$ 79")
-    c1, c2, c3, c4 = st.columns(4)
+    style_desc = st.text_area(
+        "Descreva o seu serviço ou produto",
+        placeholder="O que é, o que faz, para quem é, diferenciais, preço e contato. Ex.: Pizzaria do Zé, delivery em Campinas, massa de fermentação natural, 2 pizzas grandes por R$ 79 às sextas, pedidos pelo WhatsApp (19) 99999-0000",
+        height=110,
+        help="Quanto mais detalhes reais você colocar, melhor o roteiro. A IA usa só o que estiver aqui, sem inventar preços ou contatos.",
+    )
+    c1, c2, c3, c4, c5 = st.columns(5)
     purpose_name = c1.selectbox("Finalidade", list(PURPOSES))
     fmt_name = c2.selectbox("Formato", list(FORMATS))
     duration = c3.selectbox("Duração", [15, 30, 60, 90], index=1, format_func=lambda d: f"{d} segundos")
     lang_name = c4.selectbox("Idioma", list(LANGS))
+    visual_name = c5.selectbox("Estilo visual", list(VISUAIS))
     sent = st.form_submit_button("✨ Gerar roteiro com IA", type="primary")
 
 if sent:
@@ -1430,13 +1449,18 @@ if sent:
         with st.spinner("Escrevendo o roteiro…"):
             try:
                 scenes = groq_script(
-                    build_prompt(topic.strip(), purpose_name, duration, FORMATS[fmt_name], lang_name),
+                    build_prompt(
+                        topic.strip(), purpose_name, duration, FORMATS[fmt_name], lang_name,
+                        style_desc.strip(), visual_name if VISUAIS[visual_name] else "",
+                    ),
                     st.session_state["evs_groq"],
                 )
                 st.session_state["evs_inject"] = {
                     "nonce": f"{time.time():.3f}",
                     "topic": topic.strip(),
                     "purpose": PURPOSES[purpose_name],
+                    "style": VISUAIS[visual_name],
+                    "styleDesc": style_desc.strip(),
                     "duration": duration,
                     "format": FORMATS[fmt_name],
                     "lang": LANGS[lang_name],
