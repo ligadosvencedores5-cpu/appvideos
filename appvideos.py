@@ -1392,11 +1392,11 @@ def tela_entrada():
             if erro:
                 st.error(erro)
             else:
-                st.session_state.update(user=nome, groq_key=chave, xai_key=xai)
+                st.session_state.update(evs_user=nome, evs_groq=chave, evs_xai=xai)
                 st.rerun()
 
 
-if "user" not in st.session_state:
+if not st.session_state.get("evs_user") or not st.session_state.get("evs_groq"):
     tela_entrada()
     st.stop()
 
@@ -1404,13 +1404,13 @@ if "user" not in st.session_state:
 # ---------- topo: gerador de roteiro ----------
 ca, cb = st.columns([5, 1])
 ca.markdown(
-    f"<h2 style='margin-bottom:0'>🎬 Olá, {html.escape(st.session_state['user'])}!</h2>"
+    f"<h2 style='margin-bottom:0'>🎬 Olá, {html.escape(st.session_state['evs_user'])}!</h2>"
     "<p style='opacity:.75;margin-top:4px'>Descreva o vídeo, a IA escreve o roteiro e o estúdio anima. "
     "Depois é só ajustar e clicar em <b>Gerar meu vídeo</b>.</p>",
     unsafe_allow_html=True,
 )
 if cb.button("Sair", use_container_width=True):
-    for k in ("user", "groq_key", "xai_key", "inject"):
+    for k in ("evs_user", "evs_groq", "evs_xai", "evs_inject"):
         st.session_state.pop(k, None)
     st.rerun()
 
@@ -1431,9 +1431,9 @@ if sent:
             try:
                 scenes = groq_script(
                     build_prompt(topic.strip(), purpose_name, duration, FORMATS[fmt_name], lang_name),
-                    st.session_state["groq_key"],
+                    st.session_state["evs_groq"],
                 )
-                st.session_state["inject"] = {
+                st.session_state["evs_inject"] = {
                     "nonce": f"{time.time():.3f}",
                     "topic": topic.strip(),
                     "purpose": PURPOSES[purpose_name],
@@ -1447,11 +1447,11 @@ if sent:
                 st.error(str(e))
 
 # ---------- estúdio ----------
-inject = dict(st.session_state.get("inject") or {})
+inject = dict(st.session_state.get("evs_inject") or {})
 inject["engine"] = "Groq"
-inject["userName"] = st.session_state["user"]
-if st.session_state.get("xai_key"):
-    inject["xaiKey"] = st.session_state["xai_key"]
+inject["userName"] = st.session_state["evs_user"]
+if st.session_state.get("evs_xai"):
+    inject["xaiKey"] = st.session_state["evs_xai"]
 script = "<script>window.__EVS_INJECT__ = " + json.dumps(inject, ensure_ascii=False).replace("</", "<\\/") + ";</script>"
 page = (
     "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
