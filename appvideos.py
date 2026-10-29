@@ -1113,6 +1113,7 @@ const VIEWS = [
       </div>` +
       `<div class="gen-card" style="margin-top:16px">
         <h3>🤖 IA paga: clipes e imagens (Grok Imagine · xAI)</h3>
+        <div style="border:1px solid var(--rec);background:var(--rec-soft);border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start"><span style="font-size:20px;line-height:1.2">💸</span><div><b style="font-size:15px">Sem assinatura mensal.</b> <span style="color:var(--fg)">Você paga só pelo vídeo que gerar, direto na sua conta da xAI. Um vídeo incrível sai por apenas alguns reais.</span></div></div>
         <p class="mon-note" style="margin:0">Com a sua chave da xAI, cada cena ganha um fundo criado por IA: vídeo de verdade, sua foto falando ou imagens desenhadas. ${settings.xaiKey ? "<b>Chave da xAI configurada.</b>" : "Precisa da chave da xAI (console.x.ai), paga por uso."}</p>
         <div><b style="font-size:13px">1. O que a IA vai fazer</b>
           <div class="grid" style="margin-top:8px">${Object.entries(XAI_MODES).map(([k, m]) => optCard(ai.mode === k, `data-aimode="${k}"`, m.ico, m.name, m.desc)).join("")}</div></div>
