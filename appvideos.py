@@ -201,7 +201,11 @@ details.vis summary{font-size:12px;color:var(--muted);cursor:pointer}
       <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Posição">
       <span class="time" id="timeLbl">0:00 / 0:30</span>
     </div>
-    <button class="btn primary" id="btnFinish" style="width:100%;padding:12px 14px;font-size:15px">🎬 Finalizar vídeo</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn primary" id="btnFinish" style="padding:12px 10px;font-size:14.5px;white-space:normal">🎬 Finalizar vídeo</button>
+      <button class="btn" id="btnPro" style="padding:12px 10px;font-size:14.5px;white-space:normal;border-color:var(--lilac);color:var(--lilac)">⭐ Criar vídeo profissional (IA)</button>
+    </div>
+    <div id="proConfirm" hidden></div>
     <div class="mon-note" id="monNote"></div>
   </aside>
 </main>
@@ -315,6 +319,8 @@ function updateFinishBtn() {
   const fb = document.getElementById("btnFinish"); if (!fb) return;
   fb.disabled = exporting;
   fb.textContent = exporting ? "Gravando o vídeo…" : runtime.exportUrl ? "⬇ Baixar vídeo pronto" : "🎬 Finalizar vídeo";
+  const pb = document.getElementById("btnPro");
+  if (pb) { pb.disabled = exporting || clipsRunning || proRunning; pb.textContent = proRunning ? (clipsRunning ? "⭐ Gerando cenas com IA…" : "⭐ Finalizando…") : "⭐ Criar vídeo profissional (IA)"; }
 }
 function save() {
   P.updated = Date.now();
@@ -931,19 +937,21 @@ function loadClip(sceneId, url, noCors) {
   runtime.clipVideos[sceneId] = v;
 }
 let clipsRunning = false;
-async function runAI(only, kind = "gerar") {
-  if (!settings.xaiKey) { openSettings(); toast("Cole a sua chave da xAI para usar a IA paga."); return; }
+function sceneDone(s) { return AI().mode === "foto_ia" ? !!(s.img && s.aiImg) : !!s.clipUrl; }
+async function runAI(only, kind = "gerar", skipDone = false) {
+  if (!settings.xaiKey) { openSettings(); toast("Cole a sua chave da xAI para usar a IA paga."); return false; }
   const ai = AI();
-  if ((ai.mode === "avatar" || ai.mode === "personagem") && !P.presenter.photo) { toast("Envie a sua foto no passo Apresentador primeiro."); return; }
+  if ((ai.mode === "avatar" || ai.mode === "personagem") && !P.presenter.photo) { toast("Envie a sua foto no passo Apresentador primeiro."); return false; }
   if (timelineDirty) buildTimeline();
-  const list = TL.scenes.filter(x => !only || x.s.id === only);
+  const list = TL.scenes.filter(x => (!only || x.s.id === only) && !(skipDone && sceneDone(x.s)));
+  if (!list.length) return true;
   if (kind === "gerar" && ai.mode === "imagem") {
     const miss = list.filter(x => !x.s.img);
-    if (miss.length) { toast(`Envie a imagem da cena ${miss.map(x => x.i + 1).join(", ")} primeiro (botão 📷).`, 5000); return; }
+    if (miss.length) { toast(`Envie a imagem da cena ${miss.map(x => x.i + 1).join(", ")} primeiro (botão 📷).`, 5000); return false; }
   }
-  if ((kind === "estender" || kind === "editar") && list.some(x => !x.s.clipUrl)) { toast("Gere o clipe desta cena primeiro."); return; }
+  if ((kind === "estender" || kind === "editar") && list.some(x => !x.s.clipUrl)) { toast("Gere o clipe desta cena primeiro."); return false; }
   const editTxt = (document.getElementById("aiEdit")?.value || "").trim();
-  if (kind === "editar" && !editTxt) { toast("Escreva o que a IA deve mudar no clipe."); document.getElementById("aiEdit")?.focus(); return; }
+  if (kind === "editar" && !editTxt) { toast("Escreva o que a IA deve mudar no clipe."); document.getElementById("aiEdit")?.focus(); return false; }
   clipsRunning = true; renderStep();
   await Promise.all(list.map(async (x, n) => {
     await new Promise(r => setTimeout(r, n * 2200)); // respeita o limite de pedidos
@@ -968,6 +976,41 @@ async function runAI(only, kind = "gerar") {
     renderClipRows();
   }));
   clipsRunning = false; renderStep();
+  return list.every(x => clipJobs[x.s.id]?.status === "ok");
+}
+/* vídeo profissional em um clique: confirma o custo, gera as cenas que faltam e finaliza */
+let proRunning = false;
+function proPending() { if (timelineDirty) buildTimeline(); return TL.scenes.filter(x => !sceneDone(x.s)); }
+function proCost() {
+  const ai = AI(), miss = proPending();
+  if (ai.mode === "foto_ia") return miss.length * XAI_IMG_PRICE;
+  return miss.reduce((a, x) => a + clipSeconds(x), 0) * (XAI_MODELS[ai.model].price[ai.res] || 0.05);
+}
+function openProConfirm() {
+  if (exporting || clipsRunning || proRunning) return;
+  const box = document.getElementById("proConfirm");
+  if (!settings.xaiKey) {
+    step = 7; renderStep(); $("#stepArea").scrollIntoView({ behavior: "smooth", block: "start" });
+    toast("Para o vídeo profissional, entre no app com a chave da xAI (veja o tutorial, aba As chaves).", 6000); return;
+  }
+  const ai = AI(), miss = proPending();
+  box.hidden = false;
+  box.innerHTML = `<div class="hint" style="margin-top:0;border-color:var(--lilac)"><span>⭐</span><div>
+    <b>Vídeo profissional com IA</b><br>
+    Modo: <b>${esc(XAI_MODES[ai.mode].name)}</b>${ai.mode !== "foto_ia" ? ` · modelo <b>${esc(XAI_MODELS[ai.model].name)}</b> · ${ai.res}` : ""}.<br>
+    ${miss.length ? `Vai gerar <b>${miss.length} ${miss.length > 1 ? "cenas" : "cena"}</b> por cerca de <b>US$ ${proCost().toFixed(2)}</b>, cobrados na sua conta da xAI.` : "Todas as cenas já têm IA. Vou só finalizar o vídeo, sem custo."}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary sm" id="proYes">Confirmar e criar</button><button class="btn sm" id="proOpts">Mudar opções</button><button class="btn ghost sm" id="proNo">Cancelar</button></div>
+  </div></div>`;
+}
+async function runPro() {
+  const box = document.getElementById("proConfirm"); box.hidden = true; box.innerHTML = "";
+  proRunning = true; step = 7; renderStep(); $("#stepArea").scrollIntoView({ behavior: "smooth", block: "start" });
+  const ok = await runAI(null, "gerar", true);
+  if (!ok) { proRunning = false; updateFinishBtn(); toast("Algumas cenas não ficaram prontas. Veja o erro em cada cena e tente de novo.", 6000); return; }
+  toast("Cenas com IA prontas. Finalizando o vídeo…");
+  proRunning = true; updateFinishBtn();
+  await exportVideo();
+  proRunning = false; updateFinishBtn();
 }
 const clipJobs = {}; // sceneId -> {status, msg}
 
@@ -1240,6 +1283,10 @@ document.addEventListener("click", async e => {
     }
     case "aiStop": aiCtl && aiCtl.abort(); break;
     case "expBtn": exportVideo(); break;
+    case "btnPro": openProConfirm(); break;
+    case "proYes": runPro(); break;
+    case "proNo": { const b = document.getElementById("proConfirm"); b.hidden = true; b.innerHTML = ""; break; }
+    case "proOpts": { const b = document.getElementById("proConfirm"); b.hidden = true; b.innerHTML = ""; step = 7; renderStep(); setTimeout(() => document.getElementById("clipBtn")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50); break; }
     case "btnFinish":
       if (exporting) break;
       if (runtime.exportUrl) { downloadExport(); break; }
@@ -1525,8 +1572,12 @@ SOBRE O APP "Estúdio de Vídeos":
 - As chaves valem só na sessão; não ficam salvas no servidor. Ao clicar em Sair ou fechar, precisa colar de novo.
 
 COMO CRIAR A CHAVE DA GROQ: console.groq.com -> criar conta ou entrar (pode ser com Google) -> API Keys -> Create API Key -> copiar (aparece uma vez).
-COMO CRIAR A CHAVE DA xAI: console.x.ai -> criar conta (X, Google ou e-mail; se pedir Team, criar com qualquer nome) -> Billing: cartão e créditos pré-pagos (5 a 10 dólares dão vários vídeos; sem mensalidade) -> API Keys -> Create API Key -> copiar. Criar a chave é grátis; só cobra ao gerar.
+COMO CRIAR A CHAVE DA xAI (site em inglês): console.x.ai -> Sign up/Sign in (criar conta/entrar com X, Google ou e-mail; se pedir Create team, criar com qualquer nome) -> Settings (configurações) -> menu Team -> Billing (cobrança): Payment method (cartão) e Buy credits/Top up (créditos pré-pagos; 5 a 10 dólares dão vários vídeos; sem mensalidade) -> Back (voltar) -> no menu principal da esquerda, API Keys -> Create API Key -> Name: appvideos -> Create/Save -> Copy (a chave começa com xai- e aparece uma vez). Criar a chave é grátis; só cobra ao gerar.
+NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe) e chaves criadas no painel do Cursor (tipo Cursor, começando com grok_). Só serve a chave xai- criada em console.x.ai.
+Tradução dos menus da xAI: Usage = uso/gastos, Models = modelos, Team members = membros, Security = segurança, Audit Log = registro de atividades, Domains = domínios, Observability = monitoramento.
+COMO CRIAR A CHAVE DA GROQ (site em inglês): console.groq.com -> Sign up/Log in (Continue with Google) -> API Keys -> Create API Key -> Display name -> Submit -> Copy (começa com gsk_, aparece uma vez).
 
+DOIS CAMINHOS: (A) VÍDEO SIMPLES GRÁTIS = só chave Groq, fundos animados do app, passos abaixo. (B) VÍDEO PROFISSIONAL = chaves Groq + xAI: gerar roteiro no topo, depois passo 8 Gerar > seção IA paga > escolher modo, modelo (Lite barato / 1.5 melhor), resolução (comece 480p), conferir custo, Gerar clipes de todas as cenas (ou só uma para testar), esperar Pronto, depois Finalizar vídeo e Baixar.
 PASSO A PASSO DO VÍDEO:
 1. No topo: Tema do vídeo + "Descreva o seu serviço ou produto" (o que é, o que faz, para quem, diferenciais, preço, contato).
 2. Escolher Finalidade, Formato (Vertical 9:16 para Reels/Stories, Horizontal 16:9 para YouTube, Quadrado 1:1 para feed), Duração (15/30/60/90 s), Idioma e Estilo visual.
@@ -1630,27 +1681,57 @@ def chat_duvidas():
 
 # ---------- tutorial para leigos ----------
 GUIA_GROQ = """
-**Chave da Groq (grátis, obrigatória: é ela que escreve os roteiros)**
-1. No computador, abra **console.groq.com**.
-2. Clique em **Sign up** (criar conta) ou **Log in** (entrar). Pode entrar com a conta do Google.
-3. No menu, clique em **API Keys** e depois em **Create API Key**.
-4. Dê um nome qualquer (por exemplo `appvideos`) e confirme.
-5. Copie a chave que aparecer. Ela começa com **gsk_** e só aparece uma vez. Guarde num lugar seguro.
+**Chave da Groq (grátis, obrigatória: é ela que escreve os roteiros)** · [abrir site](https://console.groq.com/keys)
+
+O site é em inglês. Ao lado de cada botão está o que ele significa.
+
+1. Clique aqui para abrir: 👉 **[console.groq.com/keys](https://console.groq.com/keys)** (abre em outra aba).
+2. Clique em **Sign up** (criar conta) ou **Log in** (entrar). O mais fácil é **Continue with Google** (continuar com o Google).
+3. Se não abrir direto, no menu da esquerda clique em **API Keys** (chaves de API).
+4. Clique em **Create API Key** (criar chave de API).
+5. No campo **Display name** (nome), escreva qualquer nome, por exemplo `appvideos`, e clique em **Submit** (enviar).
+6. Aparece a chave, começando com **gsk_**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
+   Cole num bloco de notas e guarde num lugar seguro.
+7. Cole a chave no campo **Sua chave da Groq**, na tela de entrada deste app.
 """
 GUIA_XAI = """
-**Chave da xAI (opcional, paga por uso: para clipes e imagens feitos por IA)**
-1. No computador, abra **console.x.ai**.
-2. Crie a conta ou entre (pode ser com a conta do X/Twitter, do Google ou e-mail). Se pedir um "Team", crie com qualquer nome.
-3. Em **Billing**, coloque um cartão e compre créditos (5 a 10 dólares já dão para vários vídeos). Não tem mensalidade.
-4. Em **API Keys**, clique em **Create API Key** e confirme.
-5. Copie a chave. Ela começa com **xai-** e só aparece uma vez.
+**Chave da xAI (opcional, paga por uso: para clipes e imagens feitos por IA)** · [abrir site](https://console.x.ai)
+
+O site também é em inglês. Ao lado de cada botão está o que ele significa.
+
+**Parte 1: criar a conta**
+
+1. Clique aqui para abrir: 👉 **[console.x.ai](https://console.x.ai)** (abre em outra aba).
+2. Clique em **Sign up** (criar conta) ou **Sign in** (entrar). Pode entrar com a conta do **X** (Twitter), do **Google** ou com e-mail.
+3. Se aparecer **Create team** (criar equipe), escreva qualquer nome (por exemplo, o nome do seu negócio) e confirme.
+
+**Parte 2: colocar créditos** (sem créditos a chave não gera nada)
+
+4. Clique no seu nome ou na engrenagem para abrir **Settings** (configurações).
+5. No menu **Team** (equipe), clique em **Billing** (cobrança).
+6. Adicione um cartão em **Payment method** (forma de pagamento) e compre créditos em **Buy credits** / **Top up** (comprar créditos).
+   **5 a 10 dólares** já dão para vários vídeos. É pré-pago: **não tem mensalidade**.
+
+**Parte 3: criar a chave**
+
+7. Clique em **Back** (voltar), no topo à esquerda, para sair das configurações.
+8. No menu principal da esquerda, clique em **API Keys** (chaves de API).
+9. Clique em **Create API Key** (criar chave de API). Em **Name** (nome), escreva `appvideos`.
+   Deixe as permissões como estão e clique em **Create** / **Save** (criar / salvar).
+10. A chave aparece começando com **xai-**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
+11. Cole a chave no campo **Chave da xAI (opcional)**, na tela de entrada deste app.
+
+**Atenção, para não confundir:**
+- **Management Keys** (chaves de gerenciamento), no menu de configurações, **não servem** para este app. Elas servem para administrar a equipe.
+- Chaves criadas **no painel do Cursor** (tipo "Cursor", começando com `grok_`) também **não servem**. Use só a chave **xai-** criada em **console.x.ai**.
+- Outros itens do menu: **Usage** (uso / quanto já gastou), **Models** (modelos), **Team members** (membros da equipe), **Security** (segurança).
 """
 
 
 def tutorial(aberto):
     with st.expander("📘 Tutorial: como usar o app (comece por aqui)", expanded=aberto):
-        t1, t2, t3, t4, t5, t6 = st.tabs(
-            ["1. O que é", "2. As chaves", "3. Criar o vídeo", "4. Voz", "5. IA paga", "6. Problemas comuns"]
+        t1, ts, tp, t2, t4, t5, t6 = st.tabs(
+            ["1. O que é", "🎬 Vídeo simples (grátis)", "⭐ Vídeo profissional", "As chaves", "Voz", "IA paga: detalhes", "Problemas comuns"]
         )
         with t1:
             st.markdown("""
@@ -1666,6 +1747,12 @@ e **não paga assinatura mensal**. Os roteiros são grátis, e os clipes com IA 
 - Um computador ou celular com **Chrome** ou **Edge** (é onde funciona melhor).
 - Uma **chave da Groq** (grátis), para os roteiros.
 - Uma **chave da xAI** (opcional), só se quiser clipes e imagens feitos por IA.
+
+**Dois jeitos de criar:**
+- **🎬 Vídeo simples (grátis):** fundos animados, títulos, legendas e música. Só com a chave da Groq.
+- **⭐ Vídeo profissional:** cenas de vídeo feitas por IA ou a sua foto falando. Com a chave da xAI, paga por uso.
+
+Veja o passo a passo de cada um nas próximas abas.
 """)
         with t2:
             st.markdown("""
@@ -1681,25 +1768,67 @@ Cada pessoa usa a sua. O uso fica na sua conta, e só você vê.
 - Aqui no app a chave vale **só enquanto você está usando**. Ela não fica salva no servidor.
   Quando você clicar em **Sair** ou fechar, precisa colar de novo na próxima vez.
 """)
-        with t3:
+        with ts:
             st.markdown("""
-**Passo a passo para criar o seu vídeo**
+### 🎬 Criar vídeo simples, **grátis**
+Vídeo animado com fundos coloridos, títulos, emojis, personagem ou a sua foto, legendas e música.
+Ótimo para promoções, avisos, dicas e stories. **Precisa só da chave da Groq (grátis).**
 
-1. **Topo da página:** escreva o **Tema do vídeo** (ex.: *Promoção de pizza de sexta*).
-2. **Descreva o seu serviço ou produto:** o que você vende, o que faz, para quem, diferenciais, **preço** e **contato**.
-   Quanto mais detalhes reais, melhor. A IA não inventa preços nem telefones.
-3. Escolha **Finalidade**, **Formato** (vertical para Reels/Stories), **Duração**, **Idioma** e **Estilo visual**.
-4. Clique em **✨ Gerar roteiro com IA** e espere alguns segundos.
-5. O roteiro aparece no estúdio, no passo **Roteiro**. Cada cena tem um **título** (texto grande na tela) e a **fala**.
-   Você pode mudar qualquer palavra, apagar ou adicionar cenas.
-6. Se quiser, passeie pelos passos do estúdio: **Estilo**, **Apresentador** (sua foto ou um personagem),
-   **Voz** e **Música**. Aperte **▶** na prévia para assistir.
-7. Quando estiver bom, clique no botão laranja **🎬 Finalizar vídeo**, embaixo da prévia.
-8. O vídeo é gravado **em tempo real**: um vídeo de 30 segundos leva 30 segundos.
-   **Deixe a aba aberta e na frente** enquanto grava.
-9. No fim, o botão vira **⬇ Baixar vídeo pronto**. Clique e salve no seu computador ou celular.
+1. **Entre no app** com o seu nome e a **chave da Groq**.
+2. **No topo da página**, escreva o **Tema do vídeo** (ex.: *Promoção de pizza de sexta*).
+3. Em **Descreva o seu serviço ou produto**, conte o que você vende, o que faz, para quem, diferenciais, **preço** e **contato**.
+4. Escolha **Finalidade**, **Formato** (vertical para Reels/Stories), **Duração**, **Idioma** e **Estilo visual**.
+5. Clique em **✨ Gerar roteiro com IA** e espere alguns segundos.
+6. O roteiro aparece no estúdio, no passo **Roteiro**. Cada cena tem um **título** (texto grande) e a **fala**. Mude o que quiser.
+7. Se quiser, ajuste nos passos do estúdio: **Estilo**, **Apresentador** (sua foto ou um personagem), **Voz** e **Música**.
+   Aperte **▶** na prévia para assistir.
+8. Clique no botão laranja **🎬 Finalizar vídeo**, embaixo da prévia.
+   Ele grava **em tempo real** (30 s de vídeo = 30 s de espera). **Deixe a aba aberta e na frente.**
+9. Clique em **⬇ Baixar vídeo pronto** e pronto!
 
-**Dica:** mudou alguma coisa depois de finalizar? Clique em **🎬 Finalizar vídeo** de novo para gravar a versão nova.
+💡 Mudou algo depois? Clique em **🎬 Finalizar vídeo** de novo.
+💡 Quer voz no arquivo baixado? Veja a aba **Voz** (use **Enviar áudio**).
+""")
+        with tp:
+            st.markdown("""
+### ⭐ Criar vídeo **profissional** (IA paga, sem assinatura)
+Cada cena ganha **vídeo de verdade feito por IA**: pessoas, produtos, lugares e câmera em movimento,
+ou **a sua foto falando**. Você paga só pelo vídeo que gerar, direto na sua conta da xAI,
+**a partir de poucos reais por vídeo**. **Precisa da chave da Groq + a chave da xAI** (veja a aba **As chaves**).
+
+**Parte 1: entrar com as duas chaves**
+1. Na tela de entrada, preencha o **nome**, a **chave da Groq** (*gsk_*) e a **chave da xAI** (*xai-*).
+   Já entrou sem a chave da xAI? Clique em **Sair** e entre de novo com ela.
+
+**Parte 2: fazer o roteiro (grátis)**
+
+2. No **topo da página**, preencha o **Tema** e **Descreva o seu serviço ou produto**, escolha formato e duração.
+3. Clique em **✨ Gerar roteiro com IA** e confira as cenas no passo **Roteiro** do estúdio.
+
+⚡ **Atalho:** depois de fazer o roteiro, clique no botão **⭐ Criar vídeo profissional (IA)**, embaixo da prévia.
+Ele mostra o custo, pede a sua confirmação, gera as cenas com IA e já finaliza o vídeo sozinho.
+Os passos abaixo mostram como escolher as opções com calma.
+
+**Parte 3: gerar as cenas com a IA profissional**
+
+4. No estúdio, clique no passo **8 · Gerar** e desça até **🤖 IA paga**.
+5. Em **1. O que a IA vai fazer**, escolha:
+   - **✍️ Texto → vídeo**: cenas de vídeo criadas pela IA (o mais comum).
+   - **🗣️ Minha foto falando**: a sua foto vira um apresentador que fala. Antes, envie a foto no passo **Apresentador**.
+   - **🖼️ Animar minhas imagens**: use o botão **📷** de cada cena para enviar a foto do produto, da loja ou do imóvel.
+   - **🎨 Imagens com IA**: imagens desenhadas pela IA, a opção mais barata.
+6. Em **2. Modelo**, escolha **Lite** (mais barato) ou **1.5** (melhor qualidade e fala sincronizada).
+7. Em **3. Resolução**, comece com **480p**. Em **4. Som do clipe**, escolha **Mudo** para usar a sua música e voz.
+8. Confira o **💰 custo estimado**.
+9. Clique em **🤖 Gerar clipes de todas as cenas** e espere aparecer **Pronto** em cada cena (1 a 3 minutos por cena).
+
+**Parte 4: finalizar e baixar**
+
+10. Clique no botão laranja **🎬 Finalizar vídeo**. O app junta os clipes da IA com títulos, legendas, música e a sua marca.
+11. Deixe a aba aberta até terminar e clique em **⬇ Baixar vídeo pronto**.
+
+💡 **Primeiro teste barato:** em vez de gerar todas as cenas, clique em **Gerar** em **uma cena só**,
+com o modelo **Lite** em **480p**. Assim você vê o resultado gastando centavos.
 """)
         with t4:
             st.markdown("""
@@ -1775,13 +1904,13 @@ def tela_entrada():
                 "Sua chave da Groq",
                 type="password",
                 placeholder="gsk_...",
-                help="Crie grátis em console.groq.com → API Keys.",
+                help="Crie grátis em https://console.groq.com/keys (veja o passo a passo logo abaixo).",
             )
             xai = st.text_input(
                 "Chave da xAI (opcional)",
                 type="password",
                 placeholder="xai-...",
-                help="Só para gerar clipes animados por IA (Grok Imagine). É paga por uso: console.x.ai.",
+                help="Só para gerar clipes animados por IA (Grok Imagine). É paga por uso: https://console.x.ai (veja o passo a passo logo abaixo).",
             )
             entrar = st.form_submit_button("Entrar no app", type="primary", use_container_width=True)
         st.caption("🔒 Suas chaves valem só nesta sessão. Elas não ficam salvas no servidor e ninguém mais vê.")
