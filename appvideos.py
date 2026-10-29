@@ -5,8 +5,10 @@ daquela pessoa e não é gravada no servidor. O Python escreve o roteiro com a G
 entrega as cenas para o estúdio animado. Os projetos ficam salvos no navegador de cada um.
 Arquivo único: não precisa de requirements.txt (só usa o Streamlit e a biblioteca padrão).
 """
+import base64
 import html
 import json
+import os
 import re
 import time
 
@@ -14,6 +16,11 @@ import urllib.error
 import urllib.request
 import streamlit as st
 import streamlit.components.v1 as components
+
+try:  # componente que conversa nos dois sentidos (Streamlit 1.5x+)
+    from streamlit.components import v2 as components_v2
+except Exception:  # noqa: BLE001
+    components_v2 = None
 
 HTML = r'''<title>Estúdio de Vídeos</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -274,7 +281,7 @@ const STEPS = ["Finalidade", "Formato", "Estilo", "Apresentador", "Voz", "Roteir
 /* ============ ambiente ============ */
 const ENV = { viewer: !!window.claude, sample: null, downloads: null };
 const settings = Object.assign({ groqKey: "", groqModel: "openai/gpt-oss-120b", xaiKey: "", xaiModel: "grok-imagine-video", xaiRes: "480p" }, store.get("evs.settings", {}));
-function saveSettings() { store.set("evs.settings", settings); }
+function saveSettings() { const c = Object.assign({}, settings); if (c.xaiKey === "__servidor__") c.xaiKey = ""; store.set("evs.settings", c); }
 function engineName() {
   if (ENV.sample) return "Claude";
   if (settings.groqKey) return "Groq";
@@ -856,7 +863,44 @@ function xaiCost() {
   const p = XAI_MODELS[ai.model].price[ai.res] || 0.05;
   return TL.scenes.reduce((a, x) => a + clipSeconds(x), 0) * p;
 }
+/* Ponte com o servidor: no app do Streamlit, os pedidos à xAI saem do servidor (Python), não do navegador.
+   A chave da xAI fica só no servidor e os clipes chegam já baixados, sem bloqueio do navegador. */
+const BR = { ok: false, pend: {}, n: 0, tries: 0 };
+window.addEventListener("message", e => {
+  const m = e.data; if (!m || typeof m !== "object") return;
+  if (m.evs === "pong") { BR.ok = true; return; }
+  if (m.evs === "res" && m.res) { const cb = BR.pend[m.res.reqId]; if (cb) { delete BR.pend[m.res.reqId]; cb(m.res); } }
+});
+function bridgePing() {
+  if (BR.ok || window.parent === window || BR.tries > 30) return;
+  BR.tries++; try { window.parent.postMessage({ evs: "ping" }, "*"); } catch (e) {}
+  setTimeout(bridgePing, 1500);
+}
+function bridgeCall(method, path, body) {
+  return new Promise((res, rej) => {
+    const reqId = uid() + "-" + (BR.n++);
+    const t = setTimeout(() => { delete BR.pend[reqId]; rej(new Error("O servidor demorou para responder. Confira em instantes se a cena ficou pronta antes de tentar de novo.")); }, 240000);
+    BR.pend[reqId] = r => { clearTimeout(t); res(r); };
+    window.parent.postMessage({ evs: "req", req: { reqId, method, path, body: body || null } }, "*");
+  });
+}
+function xaiError(status, j, body) {
+  const usaImagem = body && (body.image || body.reference_images);
+  if (status === 401 || status === 403) return "A xAI recusou a chave. Clique em Sair e entre de novo com a chave da xAI correta.";
+  if (status === 402) return "Sem créditos na conta da xAI. Adicione créditos em console.x.ai (Billing).";
+  if (status === 429) return "Muitos pedidos seguidos na xAI. Espere um minuto e tente de novo.";
+  let m = j?.error?.message || j?.error || j?.message || ("Erro " + status);
+  if (typeof m !== "string") m = JSON.stringify(m);
+  if (usaImagem && status >= 400 && status < 500) m += " · A xAI pode não ter aceitado a imagem enviada. Tente uma foto JPG menor, de frente e bem iluminada, ou use o modo Texto → vídeo.";
+  return m;
+}
 async function xaiFetch(path, body) {
+  if (ENV.xaiServer) {
+    if (!BR.ok) { bridgePing(); throw new Error("A conexão com o servidor ainda não ficou pronta. Espere alguns segundos e tente de novo."); }
+    const r = await bridgeCall(body ? "POST" : "GET", path, body);
+    if (!r.ok) throw new Error(r.error || xaiError(r.status, r.json, body));
+    return r.json || {};
+  }
   let r;
   try {
     r = await fetch("https://api.x.ai/v1/" + path, {
@@ -868,20 +912,14 @@ async function xaiFetch(path, body) {
     throw new Error(ENV.viewer ? "Esta página publicada não acessa a xAI. Use o app no Streamlit ou a versão para computador." : "O navegador bloqueou o acesso à xAI. Me avise para eu passar os clipes para o servidor.");
   }
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    if (r.status === 401 || r.status === 403) throw new Error("A xAI recusou a chave. Confira a chave da xAI.");
-    if (r.status === 402) throw new Error("Sem créditos na conta da xAI. Adicione créditos em console.x.ai.");
-    if (r.status === 429) throw new Error("Muitos pedidos seguidos na xAI. Espere um minuto e tente de novo.");
-    const m = j?.error?.message || j?.error || j?.message || ("Erro " + r.status);
-    throw new Error(typeof m === "string" ? m : JSON.stringify(m));
-  }
+  if (!r.ok) throw new Error(xaiError(r.status, j, body));
   return j;
 }
 async function xaiWait(id) {
   for (let k = 0; k < 160; k++) {
     await new Promise(r => setTimeout(r, 4000));
     const j = await xaiFetch("videos/" + id);
-    if (j.status === "done" && j.video?.url) return j.video.url;
+    if (j.status === "done" && j.video?.url) return j.video;
     if (j.status === "failed" || j.status === "expired") throw new Error(j.error?.message || "A geração falhou. Tente de novo ou mude a descrição da cena.");
   }
   throw new Error("Demorou demais. Tente esta cena de novo.");
@@ -927,13 +965,13 @@ function routeClip(v) {
   if (v._routed || !audio()) return;
   try { const n = AC.createMediaElementSource(v); n.connect(voiceBus); v._routed = true; } catch (e) {}
 }
-function loadClip(sceneId, url, noCors) {
+function loadClip(sceneId, url, noCors, isLocal) {
   const v = document.createElement("video");
-  if (!noCors) v.crossOrigin = "anonymous";
+  if (!noCors && !isLocal) v.crossOrigin = "anonymous";
   v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
   v._tainted = !!noCors;
   v.addEventListener("loadeddata", () => { if (!player.playing) renderFrame(player.t); });
-  v.addEventListener("error", () => { if (!noCors) loadClip(sceneId, url, true); }, { once: true });
+  v.addEventListener("error", () => { if (!noCors && !isLocal) loadClip(sceneId, url, true); }, { once: true });
   runtime.clipVideos[sceneId] = v;
 }
 let clipsRunning = false;
@@ -966,8 +1004,10 @@ async function runAI(only, kind = "gerar", skipDone = false) {
         else if (kind === "editar") req = await xaiFetch("videos/edits", { model: "grok-imagine-video", prompt: editTxt, video_url: x.s.clipUrl });
         else req = await xaiFetch("videos/generations", clipBody(x));
         if (!req.request_id) throw new Error("A xAI não devolveu o número do pedido.");
-        const url = await xaiWait(req.request_id);
-        x.s.clipUrl = url; save(); loadClip(x.s.id, url);
+        const vid = await xaiWait(req.request_id);
+        let local = "";
+        if (vid.data) { try { local = URL.createObjectURL(await (await fetch(vid.data)).blob()); } catch (e) { local = ""; } }
+        x.s.clipUrl = vid.url; save(); loadClip(x.s.id, local || vid.url, false, !!local);
       }
       clipJobs[x.s.id] = { status: "ok", msg: "Pronto" };
     } catch (e) {
@@ -1352,6 +1392,17 @@ function openProjects() {
 }
 function openSettings() {
   const L = $("#layer");
+  if (ENV.hostAI) {
+    L.innerHTML = `<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-label="Chaves de IA">
+      <div style="display:flex;justify-content:space-between;align-items:center"><h2>Chaves de IA</h2><button type="button" class="btn sm ghost" id="closeL">Fechar</button></div>
+      <p class="mon-note" style="font-size:14px">Neste app, as chaves ficam na <b>tela de entrada</b> e são usadas pelo <b>servidor</b>, que é o jeito mais seguro: elas não ficam no navegador.</p>
+      <ul class="checklist"><li class="ok"><span class="s">✓</span>Groq (roteiros e chat): conectada</li>
+      <li class="${ENV.xaiServer ? "ok" : ""}"><span class="s">${ENV.xaiServer ? "✓" : "–"}</span>xAI (IA paga): ${ENV.xaiServer ? "conectada" : "não informada"}</li></ul>
+      <p class="mon-note">Para trocar ou adicionar uma chave, clique em <b>Sair</b> no topo da página e entre de novo.</p>
+    </div></div>`;
+    $("#scrim").onclick = ev => { if (ev.target.id === "scrim" || ev.target.id === "closeL") closeLayer(); };
+    return;
+  }
   L.innerHTML = `<div class="scrim" id="scrim"><form class="sheet" id="setForm" role="dialog" aria-label="Chaves de IA">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2>Chaves de IA</h2><button type="button" class="btn sm ghost" id="closeL">Fechar</button></div>
     ${ENV.viewer ? hint("Você está na <b>página publicada</b>. Aqui o roteiro é escrito pela IA do Claude e as chaves abaixo não funcionam, porque a página não pode acessar outros sites. Use as chaves na <b>versão para computador</b> (arquivo .html que te mandei no chat).", "warn") : ""}
@@ -1379,7 +1430,8 @@ function openSettings() {
 // roteiro entregue pelo servidor (ex.: app no Streamlit, que guarda a chave da Groq em segredo)
 const INJ = window.__EVS_INJECT__;
 if (INJ && INJ.engine) ENV.hostAI = INJ.engine;
-if (INJ && INJ.xaiKey) settings.xaiKey = INJ.xaiKey; // chave da sessão, digitada na tela de entrada
+if (INJ && INJ.xaiServer) { ENV.xaiServer = true; settings.xaiKey = "__servidor__"; } // a chave fica só no servidor
+if (INJ && INJ.engine) bridgePing();
 if (INJ && Array.isArray(INJ.scenes) && INJ.scenes.length && INJ.nonce && store.get("evs.injected", "") !== INJ.nonce) {
   try {
     const np = sampleProject();
@@ -1679,6 +1731,132 @@ def chat_duvidas():
         st.rerun()
 
 
+
+# ---------- ponte estúdio ↔ servidor (IA paga pela xAI) ----------
+# O estúdio (dentro do iframe) manda os pedidos para cá por postMessage. O servidor chama a xAI com a
+# chave da pessoa (que nunca vai para o navegador), baixa os clipes prontos e devolve tudo para o estúdio.
+PONTE_JS = r"""
+export default function(component) {
+  const { data, setTriggerValue } = component;
+  const G = window.__evsPonte || (window.__evsPonte = { queue: [], inflight: false, seen: new Set(), src: null });
+  G.set = setTriggerValue;
+  if (!G.listening) {
+    G.listening = true;
+    window.addEventListener("message", (ev) => {
+      const m = ev.data;
+      if (!m || typeof m !== "object") return;
+      if (m.evs === "ping") { try { ev.source.postMessage({ evs: "pong" }, "*"); } catch (e) {} return; }
+      if (m.evs !== "req" || !m.req) return;
+      G.src = ev.source; G.queue.push(m.req); G.flush();
+    });
+    G.flush = () => {
+      if (G.inflight || !G.queue.length) return;
+      G.inflight = true;
+      const lote = { id: String(Date.now()) + Math.random().toString(36).slice(2, 6), reqs: G.queue.splice(0, 6) };
+      G.cur = lote;
+      clearTimeout(G.timer);
+      G.timer = setTimeout(() => {  // sem resposta: libera a fila e avisa o estúdio
+        if (!G.cur || G.cur.id !== lote.id) return;
+        for (const r of lote.reqs) { try { G.src && G.src.postMessage({ evs: "res", res: { reqId: r.reqId, ok: false, status: 0, error: "O servidor não respondeu a tempo. Tente de novo." } }, "*"); } catch (e) {} }
+        G.inflight = false; G.cur = null; G.flush();
+      }, 200000);
+      G.set("lote", lote);
+    };
+  }
+  const d = data || {};
+  for (const r of (d.out || [])) {
+    if (G.seen.has(r.reqId)) continue;
+    G.seen.add(r.reqId);
+    try { G.src && G.src.postMessage({ evs: "res", res: r }, "*"); } catch (e) {}
+  }
+  if (d.feito && G.cur && d.feito === G.cur.id) { clearTimeout(G.timer); G.inflight = false; G.cur = null; G.flush(); }
+}
+"""
+ponte_xai = components_v2.component("evs_ponte_xai", js=PONTE_JS) if components_v2 else None
+
+XAI_BASE = os.environ.get("EVS_XAI_BASE", "https://api.x.ai/v1/")  # só muda em testes
+XAI_POST = {"videos/generations", "videos/extensions", "videos/edits", "images/generations"}
+XAI_GET = re.compile(r"^videos/[A-Za-z0-9_-]{4,100}$")
+MAX_CLIPE = 80 * 1024 * 1024
+
+
+def xai_http(method, path, body, key):
+    req = urllib.request.Request(
+        XAI_BASE + path,
+        data=json.dumps(body).encode("utf-8") if method == "POST" else None,
+        method=method,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "estudio-de-videos"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            txt = r.read().decode("utf-8") or "{}"
+            return r.status, json.loads(txt)
+    except urllib.error.HTTPError as e:
+        try:
+            j = json.loads(e.read().decode("utf-8") or "{}")
+        except Exception:  # noqa: BLE001
+            j = {}
+        return e.code, j
+
+
+def baixar_clipe(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "estudio-de-videos"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        tipo = (r.headers.get("Content-Type") or "video/mp4").split(";")[0].strip()
+        dados = r.read(MAX_CLIPE + 1)
+    if len(dados) > MAX_CLIPE:
+        raise RuntimeError("clipe grande demais para juntar no navegador")
+    if not tipo.startswith("video/"):
+        tipo = "video/mp4"
+    return f"data:{tipo};base64," + base64.b64encode(dados).decode("ascii")
+
+
+def atender_lote(lote):
+    chave = st.session_state.get("evs_xai", "")
+    saida = []
+    for r in (lote.get("reqs") or [])[:6]:
+        rid = str(r.get("reqId", ""))[:80]
+        metodo = "POST" if r.get("method") == "POST" else "GET"
+        caminho = str(r.get("path", ""))
+        if not chave:
+            saida.append({"reqId": rid, "ok": False, "status": 401, "error": "Entre no app com a chave da xAI para usar a IA paga (clique em Sair e entre de novo)."})
+            continue
+        permitido = caminho in XAI_POST if metodo == "POST" else (bool(XAI_GET.match(caminho)) and caminho not in XAI_POST)
+        if not permitido:
+            saida.append({"reqId": rid, "ok": False, "status": 400, "error": "Pedido não permitido."})
+            continue
+        try:
+            status, j = xai_http(metodo, caminho, r.get("body") if metodo == "POST" else None, chave)
+            video = j.get("video") if isinstance(j, dict) else None
+            if metodo == "GET" and status < 300 and j.get("status") == "done" and isinstance(video, dict) and video.get("url"):
+                try:
+                    video["data"] = baixar_clipe(video["url"])
+                except Exception as e:  # noqa: BLE001
+                    video["data_error"] = str(e)
+            saida.append({"reqId": rid, "ok": status < 300, "status": status, "json": j})
+        except Exception as e:  # noqa: BLE001
+            saida.append({"reqId": rid, "ok": False, "status": 0, "error": f"Não consegui falar com a xAI pelo servidor: {e}"})
+    return saida
+
+
+def montar_ponte():
+    """Coloca a ponte na página e atende o lote de pedidos que o estúdio mandou."""
+    if not ponte_xai:
+        return False
+    res = ponte_xai(
+        data={"out": st.session_state.get("evs_ponte_out", []), "feito": st.session_state.get("evs_ponte_feito", "")},
+        key="evs_ponte",
+        on_lote_change=lambda: None,
+    )
+    lote = getattr(res, "lote", None) if res is not None else None
+    if isinstance(lote, dict) and lote.get("id") and lote.get("id") != st.session_state.get("evs_ponte_ultimo"):
+        st.session_state["evs_ponte_ultimo"] = lote["id"]
+        st.session_state["evs_ponte_out"] = atender_lote(lote)
+        st.session_state["evs_ponte_feito"] = lote["id"]
+        st.rerun()
+    return True
+
+
 # ---------- tutorial para leigos ----------
 GUIA_GROQ = """
 **Chave da Groq (grátis, obrigatória: é ela que escreve os roteiros)** · [abrir site](https://console.groq.com/keys)
@@ -1951,7 +2129,7 @@ ca.markdown(
     unsafe_allow_html=True,
 )
 if cb.button("Sair", use_container_width=True):
-    for k in ("evs_user", "evs_groq", "evs_xai", "evs_inject", "evs_chat"):
+    for k in ("evs_user", "evs_groq", "evs_xai", "evs_inject", "evs_chat", "evs_ponte_out", "evs_ponte_feito", "evs_ponte_ultimo"):
         st.session_state.pop(k, None)
     st.rerun()
 
@@ -2006,8 +2184,9 @@ if sent:
 inject = dict(st.session_state.get("evs_inject") or {})
 inject["engine"] = "Groq"
 inject["userName"] = st.session_state["evs_user"]
-if st.session_state.get("evs_xai"):
-    inject["xaiKey"] = st.session_state["evs_xai"]
+ponte_ok = montar_ponte()
+if st.session_state.get("evs_xai") and ponte_ok:
+    inject["xaiServer"] = True  # a chave fica no servidor; o estúdio só pede pela ponte
 script = "<script>window.__EVS_INJECT__ = " + json.dumps(inject, ensure_ascii=False).replace("</", "<\\/") + ";</script>"
 page = (
     "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
