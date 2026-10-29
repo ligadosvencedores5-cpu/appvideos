@@ -1391,6 +1391,19 @@ header[data-testid="stHeader"]{background:transparent}
 [data-baseweb="input"] button svg{fill:#a69fba}
 .stApp button[kind^="primary"]{background:#ff5a36;border-color:#ff5a36;color:#1a0b06;font-weight:700}
 .stApp button[kind^="primary"]:hover{background:#ff7352;border-color:#ff7352;color:#1a0b06}
+[data-testid="stExpander"] details{background:#1a1724;border:1px solid #332d45!important;border-radius:14px}
+[data-testid="stExpander"] summary p{font-weight:700;font-size:16px}
+[data-testid="stExpander"] summary,[data-testid="stExpander"] summary:hover,[data-testid="stExpander"] summary:focus{background:#231f30!important;color:#efeaf7!important;border-radius:14px}
+[data-testid="stExpander"] summary *{color:#efeaf7!important}
+[data-testid="stExpander"] summary svg{fill:#efeaf7!important}
+[data-baseweb="input"] button{background:#100e17!important}
+.stApp [data-baseweb="tab-list"]{gap:4px;flex-wrap:wrap}
+.stApp [data-baseweb="tab"] p{color:#efeaf7!important}
+.stApp [data-baseweb="tab-highlight"]{background:#ff5a36}
+.stApp code{background:#231f30;color:#ffb39f}
+[data-testid="stChatMessage"]{background:transparent}
+[data-testid="stChatInput"],[data-testid="stChatInput"]>div,[data-testid="stChatInput"] textarea{background-color:#100e17!important;color:#efeaf7!important;border-color:#332d45!important}
+[data-testid="stVerticalBlockBorderWrapper"]{border-color:#332d45!important}
 .stApp button[kind^="secondary"]{background:#1a1724;border-color:#332d45;color:#efeaf7}
 </style>""", unsafe_allow_html=True)
 
@@ -1502,6 +1515,248 @@ def groq_check(key):
         return None  # sem conexão agora: deixa entrar, o erro aparece ao gerar o roteiro
 
 
+
+# ---------- chat de dúvidas ----------
+CONHECIMENTO = """
+SOBRE O APP "Estúdio de Vídeos":
+- Cria vídeos animados para redes sociais (Reels, Stories, TikTok, YouTube, WhatsApp, anúncios).
+- É uma ponte entre a pessoa e IAs profissionais: cada um usa a própria chave, sem assinatura mensal.
+- Roteiros: feitos pela Groq (chave grátis, começa com gsk_). Clipes e imagens com IA: xAI / Grok Imagine (chave paga por uso, começa com xai-).
+- As chaves valem só na sessão; não ficam salvas no servidor. Ao clicar em Sair ou fechar, precisa colar de novo.
+
+COMO CRIAR A CHAVE DA GROQ: console.groq.com -> criar conta ou entrar (pode ser com Google) -> API Keys -> Create API Key -> copiar (aparece uma vez).
+COMO CRIAR A CHAVE DA xAI: console.x.ai -> criar conta (X, Google ou e-mail; se pedir Team, criar com qualquer nome) -> Billing: cartão e créditos pré-pagos (5 a 10 dólares dão vários vídeos; sem mensalidade) -> API Keys -> Create API Key -> copiar. Criar a chave é grátis; só cobra ao gerar.
+
+PASSO A PASSO DO VÍDEO:
+1. No topo: Tema do vídeo + "Descreva o seu serviço ou produto" (o que é, o que faz, para quem, diferenciais, preço, contato).
+2. Escolher Finalidade, Formato (Vertical 9:16 para Reels/Stories, Horizontal 16:9 para YouTube, Quadrado 1:1 para feed), Duração (15/30/60/90 s), Idioma e Estilo visual.
+3. Clicar em "Gerar roteiro com IA". O roteiro abre no estúdio, passo Roteiro: cada cena tem título (texto grande) e fala. Pode editar, apagar, adicionar e reordenar cenas.
+4. Passos do estúdio: 1 Finalidade, 2 Formato, 3 Estilo (Vibrante, Neon, Lousa e giz, Aquarela, Cinema, Infantil, Empresa), 4 Apresentador (sem, personagem/emoji, minha foto), 5 Voz, 6 Roteiro, 7 Música (Animada, Calma, Épica, sem música; legendas; marca/@ no canto), 8 Gerar.
+5. Botão laranja "Finalizar vídeo" embaixo da prévia: grava em tempo real (30 s de vídeo levam 30 s). Deixar a aba aberta e visível. Depois clicar em "Baixar vídeo pronto". Sai em MP4 no Chrome/Edge (alguns navegadores: WebM).
+6. Se mudar algo depois, clicar em Finalizar vídeo de novo.
+- "Meus vídeos" (no estúdio) lista os projetos, salvos no navegador onde foram criados.
+
+VOZ: Voz pronta (do navegador) só toca na prévia, NÃO entra no arquivo. Para ter voz no arquivo: "Enviar áudio" (gravar no celular e enviar mp3/m4a/wav; a duração segue o áudio) ou "Minha voz" (microfone, se o navegador liberar). "Sem voz": música e legendas.
+
+IA PAGA (xAI), no passo 8 Gerar:
+- Modos: Texto -> vídeo; Minha foto falando (boca sincronizada, modelo 1.5); Personagem fixo (mesma pessoa em todas as cenas, até 10 s por cena, 720p); Animar minhas imagens (enviar imagem por cena no botão câmera); Imagens com IA (uma imagem por cena, mais barato).
+- Modelos: Lite (mais barato, ~US$0,02/s em 480p), 1.5 (melhor, fala sincronizada, ~US$0,08 a 0,25/s), Clássico (editar e estender clipes, ~US$0,05/s). Imagens: ~US$0,02 cada. Valores aproximados; o app mostra o custo antes de gerar.
+- Resolução 480p/720p/1080p. Som do clipe: mudo (usa música e voz do app) ou som da IA.
+- Depois de gerar os clipes, clicar em Finalizar vídeo.
+
+PROBLEMAS COMUNS: chave recusada -> copiar de novo sem espaços ou criar outra. Vídeo com roteiro antigo -> gerar no topo, conferir no passo Roteiro, Finalizar de novo. Vídeo sem voz -> usar Enviar áudio. Gravação travando -> aba visível, Chrome/Edge, fechar abas pesadas. Sem créditos na xAI -> Billing em console.x.ai. Projetos sumiram -> só aparecem no mesmo navegador.
+"""
+
+SISTEMA_CHAT = (
+    "Você é o assistente do app 'Estúdio de Vídeos'. Responda sempre em português do Brasil, "
+    "com linguagem simples para leigos, frases curtas e passo a passo quando ajudar. "
+    "Seja direto e simpático. Use as informações abaixo sobre o app; se algo não estiver nelas, diga que não tem certeza "
+    "em vez de inventar. Você também pode ajudar com ideias de vídeos, roteiros, títulos, legendas e dicas de redes sociais. "
+    "Nunca peça a chave da pessoa e, se ela tentar colar uma chave no chat, avise para não compartilhar chaves.\n\n"
+    + CONHECIMENTO
+)
+
+
+def groq_chat(messages, key):
+    last = None
+    for model in GROQ_MODELS:
+        body = json.dumps({"model": model, "messages": messages, "temperature": 0.5}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=body,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "estudio-de-videos"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            return (data["choices"][0]["message"].get("content") or "").strip() or "Não consegui responder agora. Tente perguntar de outro jeito."
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise RuntimeError("A Groq recusou a sua chave. Clique em Sair e entre de novo com a chave correta.")
+            if e.code == 429:
+                raise RuntimeError("A sua chave da Groq atingiu o limite de uso. Espere um pouco e tente de novo.")
+            try:
+                msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
+            except Exception:
+                msg = ""
+            last = RuntimeError(f"Groq ({e.code}): {msg or e.reason}")
+            if not (e.code in (400, 404) and "model" in msg.lower()):
+                raise last
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Não consegui conectar à Groq: {e.reason}")
+    raise last
+
+
+def chat_duvidas():
+    st.divider()
+    st.markdown(
+        "<h3 style='margin-bottom:0'>💬 Tire suas dúvidas com a IA</h3>"
+        "<p style='opacity:.75;margin-top:4px'>Pergunte qualquer coisa sobre o app, as chaves, os custos ou peça ideias de vídeo. "
+        "A conversa continua: é só ir respondendo.</p>",
+        unsafe_allow_html=True,
+    )
+    hist = st.session_state.setdefault("evs_chat", [])
+    caixa = st.container(border=True)
+    conversa = caixa.container()  # mensagens sempre acima do campo de digitar
+    pergunta = caixa.chat_input("Digite a sua dúvida e aperte Enter…", key="evs_chat_input")
+    if pergunta:
+        hist.append({"role": "user", "content": pergunta})
+    with conversa:
+        if not hist:
+            with st.chat_message("assistant", avatar="🎬"):
+                st.markdown(
+                    f"Oi, {html.escape(st.session_state['evs_user'])}! Sou o assistente do Estúdio de Vídeos. "
+                    "Como posso ajudar? Exemplos: *Como pego a chave da xAI?*, *Quanto custa um vídeo de 30 segundos?*, "
+                    "*Me dá 3 ideias de vídeo para uma pizzaria.*"
+                )
+        for m in hist:
+            with st.chat_message(m["role"], avatar="🙂" if m["role"] == "user" else "🎬"):
+                st.markdown(m["content"])
+        if pergunta:
+            with st.chat_message("assistant", avatar="🎬"):
+                with st.spinner("Pensando…"):
+                    try:
+                        msgs = [{"role": "system", "content": SISTEMA_CHAT}] + hist[-12:]
+                        resposta = groq_chat(msgs, st.session_state["evs_groq"])
+                    except Exception as e:  # noqa: BLE001
+                        resposta = f"⚠️ {e}"
+                st.markdown(resposta)
+            hist.append({"role": "assistant", "content": resposta})
+    if hist and st.button("🧹 Limpar conversa"):
+        st.session_state["evs_chat"] = []
+        st.rerun()
+
+
+# ---------- tutorial para leigos ----------
+GUIA_GROQ = """
+**Chave da Groq (grátis, obrigatória: é ela que escreve os roteiros)**
+1. No computador, abra **console.groq.com**.
+2. Clique em **Sign up** (criar conta) ou **Log in** (entrar). Pode entrar com a conta do Google.
+3. No menu, clique em **API Keys** e depois em **Create API Key**.
+4. Dê um nome qualquer (por exemplo `appvideos`) e confirme.
+5. Copie a chave que aparecer. Ela começa com **gsk_** e só aparece uma vez. Guarde num lugar seguro.
+"""
+GUIA_XAI = """
+**Chave da xAI (opcional, paga por uso: para clipes e imagens feitos por IA)**
+1. No computador, abra **console.x.ai**.
+2. Crie a conta ou entre (pode ser com a conta do X/Twitter, do Google ou e-mail). Se pedir um "Team", crie com qualquer nome.
+3. Em **Billing**, coloque um cartão e compre créditos (5 a 10 dólares já dão para vários vídeos). Não tem mensalidade.
+4. Em **API Keys**, clique em **Create API Key** e confirme.
+5. Copie a chave. Ela começa com **xai-** e só aparece uma vez.
+"""
+
+
+def tutorial(aberto):
+    with st.expander("📘 Tutorial: como usar o app (comece por aqui)", expanded=aberto):
+        t1, t2, t3, t4, t5, t6 = st.tabs(
+            ["1. O que é", "2. As chaves", "3. Criar o vídeo", "4. Voz", "5. IA paga", "6. Problemas comuns"]
+        )
+        with t1:
+            st.markdown("""
+**Este app cria vídeos animados para redes sociais**: Reels, Stories, TikTok, YouTube, WhatsApp e anúncios.
+
+Você escreve o tema e descreve o seu serviço. A inteligência artificial escreve o roteiro, e o app monta o vídeo
+com animação, títulos, legendas, música e, se quiser, a sua foto ou um personagem.
+
+**Por que é diferente:** o app é uma **ponte** entre você e as IAs profissionais. Você usa a sua própria chave
+e **não paga assinatura mensal**. Os roteiros são grátis, e os clipes com IA saem a partir de poucos reais por vídeo.
+
+**Do que você precisa:**
+- Um computador ou celular com **Chrome** ou **Edge** (é onde funciona melhor).
+- Uma **chave da Groq** (grátis), para os roteiros.
+- Uma **chave da xAI** (opcional), só se quiser clipes e imagens feitos por IA.
+""")
+        with t2:
+            st.markdown("""
+**O que é uma "chave"?** É como uma senha que liga o app à sua conta na empresa de IA.
+Cada pessoa usa a sua. O uso fica na sua conta, e só você vê.
+""")
+            st.markdown(GUIA_GROQ)
+            st.markdown(GUIA_XAI)
+            st.markdown("""
+**Cuidados importantes**
+- Nunca mande a sua chave por WhatsApp, e-mail ou grupo. Quem tiver a chave pode usar a sua conta.
+- Se achar que alguém viu a sua chave, apague ela no site (API Keys) e crie outra.
+- Aqui no app a chave vale **só enquanto você está usando**. Ela não fica salva no servidor.
+  Quando você clicar em **Sair** ou fechar, precisa colar de novo na próxima vez.
+""")
+        with t3:
+            st.markdown("""
+**Passo a passo para criar o seu vídeo**
+
+1. **Topo da página:** escreva o **Tema do vídeo** (ex.: *Promoção de pizza de sexta*).
+2. **Descreva o seu serviço ou produto:** o que você vende, o que faz, para quem, diferenciais, **preço** e **contato**.
+   Quanto mais detalhes reais, melhor. A IA não inventa preços nem telefones.
+3. Escolha **Finalidade**, **Formato** (vertical para Reels/Stories), **Duração**, **Idioma** e **Estilo visual**.
+4. Clique em **✨ Gerar roteiro com IA** e espere alguns segundos.
+5. O roteiro aparece no estúdio, no passo **Roteiro**. Cada cena tem um **título** (texto grande na tela) e a **fala**.
+   Você pode mudar qualquer palavra, apagar ou adicionar cenas.
+6. Se quiser, passeie pelos passos do estúdio: **Estilo**, **Apresentador** (sua foto ou um personagem),
+   **Voz** e **Música**. Aperte **▶** na prévia para assistir.
+7. Quando estiver bom, clique no botão laranja **🎬 Finalizar vídeo**, embaixo da prévia.
+8. O vídeo é gravado **em tempo real**: um vídeo de 30 segundos leva 30 segundos.
+   **Deixe a aba aberta e na frente** enquanto grava.
+9. No fim, o botão vira **⬇ Baixar vídeo pronto**. Clique e salve no seu computador ou celular.
+
+**Dica:** mudou alguma coisa depois de finalizar? Clique em **🎬 Finalizar vídeo** de novo para gravar a versão nova.
+""")
+        with t4:
+            st.markdown("""
+**Como colocar voz no vídeo** (passo **Voz** do estúdio)
+
+- **Voz pronta:** uma voz do computador lê o roteiro. **Atenção:** ela toca só na prévia e **não vai para o arquivo baixado**.
+- **Enviar áudio** (recomendado): grave a narração no celular, lendo o roteiro com calma, e envie o arquivo
+  (mp3, m4a, wav). A duração do vídeo se ajusta ao áudio.
+- **Minha voz:** grava pelo microfone do computador enquanto o vídeo passa como teleprompter.
+  Funciona só se o navegador liberar o microfone.
+- **Sem voz:** só música e legendas. Funciona muito bem no Reels, porque muita gente assiste sem som.
+
+Com a **IA paga** no modo **Minha foto falando**, a própria IA faz a sua foto falar a narração.
+""")
+        with t5:
+            st.markdown("""
+**IA paga (xAI): para vídeos ainda mais profissionais.** Fica no passo **8 · Gerar**, na seção **IA paga**.
+
+**O que dá para fazer:**
+- **✍️ Texto → vídeo:** cada cena vira um vídeo de verdade criado pela IA.
+- **🗣️ Minha foto falando:** a sua foto vira um apresentador que fala, com a boca sincronizada.
+- **🧸 Personagem fixo:** a mesma pessoa ou personagem aparece em todas as cenas.
+- **🖼️ Animar minhas imagens:** envie a foto do seu produto, loja ou imóvel e a IA dá movimento.
+- **🎨 Imagens com IA:** a IA desenha uma imagem por cena. É a opção mais barata.
+
+**Quanto custa (aproximado, em dólar, cobrado na sua conta da xAI):**
+- Imagens com IA: cerca de US$ 0,02 por cena.
+- Modelo **Lite**, 480p: cerca de US$ 0,02 por segundo. Um vídeo de 30 s sai por menos de 1 dólar.
+- Modelo **1.5** (melhor, com fala): de US$ 0,08 a US$ 0,25 por segundo, conforme a resolução.
+- O app mostra o **custo estimado antes de você gerar**.
+
+**Como usar:** escolha o modo, o modelo e a resolução, clique em **🤖 Gerar clipes de todas as cenas**,
+espere ficar **Pronto** em cada cena e depois clique em **🎬 Finalizar vídeo**.
+
+**Dica para começar:** faça um teste barato com **Imagens com IA** ou **Lite 480p** em uma cena só (botão **Gerar** da cena).
+""")
+        with t6:
+            st.markdown("""
+**"A Groq recusou essa chave"**: copie a chave de novo, inteira, sem espaços. Se não der certo, crie outra no site.
+
+**O roteiro não mudou / o vídeo saiu com o roteiro antigo**: gere o roteiro no **topo da página**,
+confira as cenas novas no passo **Roteiro** e clique em **🎬 Finalizar vídeo** de novo.
+
+**O vídeo baixado ficou sem voz**: a **Voz pronta** não entra no arquivo. Use **Enviar áudio** no passo **Voz**.
+
+**A gravação travou ou ficou falhando**: deixe a aba aberta e visível, feche outras abas pesadas e use o Chrome ou o Edge.
+
+**O arquivo saiu em .webm**: alguns navegadores gravam em WebM. O Chrome e o Edge atuais gravam em MP4.
+O WebM abre no computador e sobe no YouTube; para WhatsApp/Instagram, prefira o Chrome.
+
+**Sumiram os meus projetos**: eles ficam salvos **no navegador** onde você criou. Em outro computador ou
+navegador, eles não aparecem. Use **Meus vídeos** no estúdio para abrir os antigos.
+
+**Erro na IA paga ("sem créditos")**: coloque créditos em **Billing** no console.x.ai.
+""")
+
+
 # ---------- tela de entrada ----------
 def tela_entrada():
     st.markdown(
@@ -1530,7 +1785,10 @@ def tela_entrada():
             )
             entrar = st.form_submit_button("Entrar no app", type="primary", use_container_width=True)
         st.caption("🔒 Suas chaves valem só nesta sessão. Elas não ficam salvas no servidor e ninguém mais vê.")
-        st.caption("Não tem chave? Entre em console.groq.com, faça login e clique em **API Keys → Create API Key**.")
+        with st.expander("🔑 Primeira vez? Veja como conseguir as chaves (grátis)"):
+            st.markdown(GUIA_GROQ)
+            st.markdown(GUIA_XAI)
+            st.caption("Criar as chaves é grátis. A da Groq tem uso gratuito. A da xAI só cobra quando você gera clipes com IA, sem mensalidade.")
 
     if entrar:
         nome, chave, xai = nome.strip(), chave.strip(), xai.strip()
@@ -1560,13 +1818,16 @@ ca, cb = st.columns([5, 1])
 ca.markdown(
     f"<h2 style='margin-bottom:0'>🎬 Olá, {html.escape(st.session_state['evs_user'])}!</h2>"
     "<p style='opacity:.75;margin-top:4px'>Descreva o vídeo, a IA escreve o roteiro e o estúdio anima. "
-    "Depois é só ajustar e clicar em <b>Gerar meu vídeo</b>.</p>",
+    "Depois é só ajustar e clicar em <b>🎬 Finalizar vídeo</b>, embaixo da prévia.</p>",
     unsafe_allow_html=True,
 )
 if cb.button("Sair", use_container_width=True):
-    for k in ("evs_user", "evs_groq", "evs_xai", "evs_inject"):
+    for k in ("evs_user", "evs_groq", "evs_xai", "evs_inject", "evs_chat"):
         st.session_state.pop(k, None)
     st.rerun()
+
+tutorial(aberto=not st.session_state.get("evs_tut_visto", False))
+st.session_state["evs_tut_visto"] = True
 
 with st.form("roteiro"):
     topic = st.text_input("Tema do vídeo", placeholder="Ex.: Promoção de pizza de sexta, 2 por R$ 79")
@@ -1631,3 +1892,5 @@ else:  # versões antigas do Streamlit
     components.html(page, height=1450, scrolling=True)
 
 st.caption("Dica: a exportação grava o vídeo em tempo real. Deixe esta aba aberta até terminar.")
+
+chat_duvidas()
