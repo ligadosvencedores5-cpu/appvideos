@@ -84,6 +84,8 @@ h1.step-title{font-family:var(--display);font-weight:800;font-size:clamp(26px,4v
 .opt:hover{border-color:#4f4669;transform:translateY(-1px)}
 .opt .ico{font-size:24px;line-height:1}
 .opt b{font-weight:700;font-size:14px}
+.opt.on b{padding-right:22px}
+.opt:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .opt span{font-size:12.5px;color:var(--muted);line-height:1.35}
 .opt.on{border-color:var(--rec);background:linear-gradient(180deg,var(--rec-soft),transparent 70%),var(--panel)}
 .opt.on::after{content:"✓";position:absolute;top:10px;right:10px;width:20px;height:20px;border-radius:50%;background:var(--rec);color:#1a0b06;font-size:12px;font-weight:800;display:grid;place-items:center}
@@ -536,6 +538,13 @@ function drawBackground(st, key, idx, lt, T, W, H) {
     const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "rgba(0,0,0,.35)"); g.addColorStop(0.45, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.55)");
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); return true;
   }
+  const bim = bgImgs[TL.scenes[idx]?.s.id];
+  if (bim && bim.complete && bim.naturalWidth) {
+    const z = 1.04 + lt * 0.02; ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2);
+    cover(bim, bim.naturalWidth, bim.naturalHeight, 0, 0, W, H); ctx.restore();
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "rgba(0,0,0,.35)"); g.addColorStop(0.45, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.55)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); return true;
+  }
   const m = Math.min(W, H);
   if (key === "vibrante") {
     const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, pal[0]); g.addColorStop(1, pal[1]); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -628,7 +637,7 @@ function drawScene(x, T, W, H, alpha) {
   // apresentador
   const lvl = voiceLevel(T);
   const pr = P.presenter;
-  if (pr.type !== "none") {
+  if (pr.type !== "none" && !(hasClip && AI().mode === "avatar")) {
     const ps = m * (vertical ? 0.2 : 0.2);
     const px = vertical ? W * 0.2 : W * 0.12, py = vertical ? H * 0.74 : H * 0.7;
     const pop = easeBack(lt / 0.5) * (1 + lvl * 0.06);
@@ -695,7 +704,7 @@ function syncClipsTo(T, play) {
   TL.scenes.forEach(x => {
     const v = runtime.clipVideos[x.s.id]; if (!v) return;
     const inScene = T >= x.start - 0.4 && T < x.start + x.dur;
-    if (inScene) { const lt = clamp(T - x.start, 0, (v.duration || 99) - 0.05); if (Math.abs(v.currentTime - lt) > 0.3) { try { v.currentTime = lt; } catch (e) {} } if (play && v.paused) v.play().catch(() => {}); if (!play && !v.paused) v.pause(); }
+    if (inScene) { if (play && AI().clipAudio) { routeClip(v); v.muted = false; } else v.muted = true; const lt = clamp(T - x.start, 0, (v.duration || 99) - 0.05); if (Math.abs(v.currentTime - lt) > 0.3) { try { v.currentTime = lt; } catch (e) {} } if (play && v.paused) v.play().catch(() => {}); if (!play && !v.paused) v.pause(); }
     else if (!v.paused) v.pause();
   });
 }
@@ -724,7 +733,7 @@ function loop() {
   const x = sceneAt(player.t);
   if (x.i !== player.lastScene) {
     player.lastScene = x.i;
-    if (P.voice.mode === "browser" && !player.silent) speak(x.s.text);
+    if (P.voice.mode === "browser" && !player.silent && !(AI().clipAudio && runtime.clipVideos[x.s.id])) speak(x.s.text);
   }
   syncClipsTo(player.t, true);
   renderFrame(player.t);
@@ -808,64 +817,159 @@ async function generateScript(topic) {
   return localScenes(topic);
 }
 
-/* ============ IA: clipes de vídeo (Grok Imagine / xAI) ============ */
-const clipJobs = {}; // sceneId -> {status, msg}
-async function xaiCreate(x) {
-  const st = STYLES[P.style]?.name || "";
-  const body = {
-    model: settings.xaiModel || "grok-imagine-video",
-    prompt: (x.s.visual || x.s.title) + `. Style: ${st}. No text, no captions, no letters on screen.`,
-    duration: clamp(Math.round(x.dur), 1, 15),
-    aspect_ratio: P.format,
-    resolution: settings.xaiRes || "480p"
-  };
-  if (P.presenter.type === "photo" && P.presenter.photo && clipUsePhoto) body.image = { url: P.presenter.photo };
-  const r = await fetch("https://api.x.ai/v1/videos/generations", { method: "POST", headers: { "Authorization": "Bearer " + settings.xaiKey, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(r.status === 401 ? "Chave da xAI recusada." : (j?.error?.message || j?.error || ("Erro " + r.status)));
-  if (!j.request_id) throw new Error("A xAI não devolveu o número do pedido.");
-  return j.request_id;
+/* ============ IA paga: xAI (Grok Imagine) ============ */
+// Preços aproximados por segundo de vídeo (US$). Confira os valores atuais em console.x.ai.
+const XAI_MODELS = {
+  "grok-imagine-video-1.5-lite": { name: "Lite", tag: "mais barato", desc: "Ótimo custo para fundos e cenas simples. Até 1080p.", price: { "480p": 0.02, "720p": 0.03, "1080p": 0.14 } },
+  "grok-imagine-video-1.5": { name: "1.5", tag: "melhor qualidade", desc: "Imagem mais realista e fala com boca sincronizada. Até 1080p.", price: { "480p": 0.08, "720p": 0.14, "1080p": 0.25 } },
+  "grok-imagine-video": { name: "Clássico", tag: "editar e estender", desc: "Permite editar um clipe com IA e estender a duração. Até 720p.", price: { "480p": 0.05, "720p": 0.07 } }
+};
+const XAI_IMG_PRICE = 0.02;
+const XAI_MODES = {
+  texto: { ico: "✍️", name: "Texto → vídeo", desc: "A IA cria cada cena a partir da descrição da cena (personagens, lugar, câmera)." },
+  avatar: { ico: "🗣️", name: "Minha foto falando", desc: "Sua foto vira um apresentador que fala a narração, com boca sincronizada. Usa o modelo 1.5." },
+  personagem: { ico: "🧸", name: "Personagem fixo", desc: "A pessoa ou o personagem da sua foto aparece em todas as cenas. Até 10 s por cena, 720p." },
+  imagem: { ico: "🖼️", name: "Animar minhas imagens", desc: "Envie uma imagem por cena (produto, loja, imóvel) e a IA dá movimento a ela." },
+  foto_ia: { ico: "🎨", name: "Imagens com IA", desc: "A IA desenha uma imagem por cena e o app anima com zoom suave. Bem mais barato." }
+};
+function AI() {
+  if (!P.ai) P.ai = { model: "grok-imagine-video-1.5-lite", res: "480p", mode: "texto", clipAudio: false };
+  const ai = P.ai;
+  if (!XAI_MODELS[ai.model]) ai.model = "grok-imagine-video-1.5-lite";
+  if (!XAI_MODES[ai.mode]) ai.mode = "texto";
+  if (ai.mode === "avatar") { ai.model = "grok-imagine-video-1.5"; ai.clipAudio = true; }
+  if (!XAI_MODELS[ai.model].price[ai.res]) ai.res = "720p";
+  if (ai.mode === "personagem" && ai.res === "1080p") ai.res = "720p";
+  return ai;
 }
-async function xaiPoll(id) {
-  for (let k = 0; k < 150; k++) {
+function langName() { return LANGS.find(l => l.id === P.voice.lang)?.name || "Português"; }
+function clipSeconds(x) { return clamp(Math.round(x.dur), 1, AI().mode === "personagem" ? 10 : 15); }
+function xaiCost() {
+  const ai = AI();
+  if (ai.mode === "foto_ia") return TL.scenes.length * XAI_IMG_PRICE;
+  const p = XAI_MODELS[ai.model].price[ai.res] || 0.05;
+  return TL.scenes.reduce((a, x) => a + clipSeconds(x), 0) * p;
+}
+async function xaiFetch(path, body) {
+  let r;
+  try {
+    r = await fetch("https://api.x.ai/v1/" + path, {
+      method: body ? "POST" : "GET",
+      headers: Object.assign({ "Authorization": "Bearer " + settings.xaiKey }, body ? { "Content-Type": "application/json" } : {}),
+      body: body ? JSON.stringify(body) : undefined
+    });
+  } catch (e) {
+    throw new Error(ENV.viewer ? "Esta página publicada não acessa a xAI. Use o app no Streamlit ou a versão para computador." : "O navegador bloqueou o acesso à xAI. Me avise para eu passar os clipes para o servidor.");
+  }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    if (r.status === 401 || r.status === 403) throw new Error("A xAI recusou a chave. Confira a chave da xAI.");
+    if (r.status === 402) throw new Error("Sem créditos na conta da xAI. Adicione créditos em console.x.ai.");
+    if (r.status === 429) throw new Error("Muitos pedidos seguidos na xAI. Espere um minuto e tente de novo.");
+    const m = j?.error?.message || j?.error || j?.message || ("Erro " + r.status);
+    throw new Error(typeof m === "string" ? m : JSON.stringify(m));
+  }
+  return j;
+}
+async function xaiWait(id) {
+  for (let k = 0; k < 160; k++) {
     await new Promise(r => setTimeout(r, 4000));
-    const r = await fetch("https://api.x.ai/v1/videos/" + id, { headers: { "Authorization": "Bearer " + settings.xaiKey } });
-    const j = await r.json().catch(() => ({}));
+    const j = await xaiFetch("videos/" + id);
     if (j.status === "done" && j.video?.url) return j.video.url;
-    if (j.status === "failed") throw new Error(j.error?.message || "A geração falhou.");
-    if (!r.ok && r.status !== 202) throw new Error(j?.error?.message || ("Erro " + r.status));
+    if (j.status === "failed" || j.status === "expired") throw new Error(j.error?.message || "A geração falhou. Tente de novo ou mude a descrição da cena.");
   }
   throw new Error("Demorou demais. Tente esta cena de novo.");
 }
-function loadClip(sceneId, url) {
+function clipBody(x) {
+  const ai = AI(), st = STYLES[P.style]?.name || "", scene = x.s.visual || x.s.title;
+  const body = { model: ai.model, duration: clipSeconds(x), aspect_ratio: P.format, resolution: ai.res, generate_audio: !!ai.clipAudio };
+  if (ai.mode === "avatar") {
+    body.image = { url: P.presenter.photo };
+    body.prompt = `The person in the image talks directly to the camera with natural facial expressions and subtle head movement, saying in ${langName()}: "${x.s.text}". Accurate lip sync, clear voice. Keep the person's appearance. No text on screen.`;
+  } else if (ai.mode === "personagem") {
+    body.reference_images = [{ url: P.presenter.photo }];
+    body.prompt = `<IMAGE_1> is the main character. ${scene}. Style: ${st}. No text, no captions on screen.`;
+  } else if (ai.mode === "imagem") {
+    body.image = { url: x.s.img };
+    body.prompt = `Bring this image to life with smooth cinematic motion and a gentle camera move. ${scene}. No text on screen.`;
+  } else {
+    body.prompt = `${scene}. Style: ${st}. No text, no captions, no letters on screen.`;
+  }
+  return body;
+}
+function shrinkDataURL(src, max = 1024) {
+  return new Promise((res) => {
+    const im = new Image();
+    im.onload = () => { const k = Math.min(1, max / Math.max(im.width, im.height)); const c = document.createElement("canvas"); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); try { res(c.toDataURL("image/jpeg", 0.85)); } catch (e) { res(src); } };
+    im.onerror = () => res(src); im.src = src;
+  });
+}
+const bgImgs = {};
+function loadSceneImage(s) {
+  if (!s.img) { delete bgImgs[s.id]; return; }
+  if (bgImgs[s.id] && bgImgs[s.id]._src === s.img) return;
+  const im = new Image(); im._src = s.img; im.onload = () => { if (!player.playing) renderFrame(player.t); }; im.src = s.img; bgImgs[s.id] = im;
+}
+async function xaiImage(x) {
+  const j = await xaiFetch("images/generations", { model: "grok-imagine-image", prompt: `${x.s.visual || x.s.title}. Style: ${STYLES[P.style]?.name || ""}. No text, no letters, no captions.`, n: 1, response_format: "b64_json", aspect_ratio: P.format });
+  const d = j?.data?.[0];
+  if (d?.b64_json) return await shrinkDataURL("data:image/png;base64," + d.b64_json);
+  if (d?.url) return d.url;
+  throw new Error("A xAI não devolveu a imagem.");
+}
+function routeClip(v) {
+  if (v._routed || !audio()) return;
+  try { const n = AC.createMediaElementSource(v); n.connect(voiceBus); v._routed = true; } catch (e) {}
+}
+function loadClip(sceneId, url, noCors) {
   const v = document.createElement("video");
-  v.crossOrigin = "anonymous"; v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
+  if (!noCors) v.crossOrigin = "anonymous";
+  v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
+  v._tainted = !!noCors;
   v.addEventListener("loadeddata", () => { if (!player.playing) renderFrame(player.t); });
+  v.addEventListener("error", () => { if (!noCors) loadClip(sceneId, url, true); }, { once: true });
   runtime.clipVideos[sceneId] = v;
 }
-let clipUsePhoto = false, clipsRunning = false;
-async function generateClips(only) {
-  if (!settings.xaiKey) { openSettings(); toast("Cole sua chave da xAI para gerar clipes."); return; }
+let clipsRunning = false;
+async function runAI(only, kind = "gerar") {
+  if (!settings.xaiKey) { openSettings(); toast("Cole a sua chave da xAI para usar a IA paga."); return; }
+  const ai = AI();
+  if ((ai.mode === "avatar" || ai.mode === "personagem") && !P.presenter.photo) { toast("Envie a sua foto no passo Apresentador primeiro."); return; }
   if (timelineDirty) buildTimeline();
-  clipsRunning = true; renderStep();
   const list = TL.scenes.filter(x => !only || x.s.id === only);
+  if (kind === "gerar" && ai.mode === "imagem") {
+    const miss = list.filter(x => !x.s.img);
+    if (miss.length) { toast(`Envie a imagem da cena ${miss.map(x => x.i + 1).join(", ")} primeiro (botão 📷).`, 5000); return; }
+  }
+  if ((kind === "estender" || kind === "editar") && list.some(x => !x.s.clipUrl)) { toast("Gere o clipe desta cena primeiro."); return; }
+  const editTxt = (document.getElementById("aiEdit")?.value || "").trim();
+  if (kind === "editar" && !editTxt) { toast("Escreva o que a IA deve mudar no clipe."); document.getElementById("aiEdit")?.focus(); return; }
+  clipsRunning = true; renderStep();
   await Promise.all(list.map(async (x, n) => {
     await new Promise(r => setTimeout(r, n * 2200)); // respeita o limite de pedidos
-    clipJobs[x.s.id] = { status: "run", msg: "Gerando…" }; renderClipRows();
+    clipJobs[x.s.id] = { status: "run", msg: kind === "gerar" ? "Gerando…" : kind === "estender" ? "Estendendo…" : "Editando…" }; renderClipRows();
     try {
-      const id = await xaiCreate(x);
-      const url = await xaiPoll(id);
-      x.s.clipUrl = url; save(); loadClip(x.s.id, url);
+      if (kind === "gerar" && ai.mode === "foto_ia") {
+        x.s.aiImg = true; x.s.img = await xaiImage(x); delete x.s.clipUrl; delete runtime.clipVideos[x.s.id];
+        loadSceneImage(x.s); save();
+      } else {
+        let req;
+        if (kind === "estender") req = await xaiFetch("videos/extensions", { model: "grok-imagine-video", prompt: `Continue the scene naturally. ${x.s.visual || x.s.title}`, duration: 4, video: { url: x.s.clipUrl } });
+        else if (kind === "editar") req = await xaiFetch("videos/edits", { model: "grok-imagine-video", prompt: editTxt, video_url: x.s.clipUrl });
+        else req = await xaiFetch("videos/generations", clipBody(x));
+        if (!req.request_id) throw new Error("A xAI não devolveu o número do pedido.");
+        const url = await xaiWait(req.request_id);
+        x.s.clipUrl = url; save(); loadClip(x.s.id, url);
+      }
       clipJobs[x.s.id] = { status: "ok", msg: "Pronto" };
     } catch (e) {
-      let msg = e.message || String(e);
-      if (e instanceof TypeError) msg = ENV.viewer ? "A página publicada não acessa a xAI. Use a versão para computador." : "O navegador bloqueou o acesso à xAI (CORS). Veja a nota abaixo.";
-      clipJobs[x.s.id] = { status: "err", msg };
+      clipJobs[x.s.id] = { status: "err", msg: e.message || String(e) };
     }
     renderClipRows();
   }));
   clipsRunning = false; renderStep();
 }
+const clipJobs = {}; // sceneId -> {status, msg}
 
 /* ============ exportação ============ */
 let exporting = false, recorder = null;
@@ -881,6 +985,7 @@ async function exportVideo() {
   if (!mt || !cv.captureStream) { toast("Este navegador não grava vídeo. Use o Chrome, Edge ou Safari atualizados."); return; }
   audio(); if (AC) await AC.resume();
   if (timelineDirty) buildTimeline();
+  if (Object.values(runtime.clipVideos).some(v => v._tainted)) { toast("O servidor da xAI não liberou os clipes para juntar no navegador. Use o botão Abrir em cada cena para baixar os clipes.", 7000); return; }
   let stream;
   try { stream = cv.captureStream(30); }
   catch (e) { toast("Os clipes de IA não permitem gravação aqui. Baixe os clipes separadamente."); return; }
@@ -991,7 +1096,7 @@ const VIEWS = [
     `<div class="section"><label class="f" for="brand">Sua marca ou @ (aparece no canto)<input id="brand" type="text" maxlength="40" value="${esc(P.brand || "")}" placeholder="@seuperfil"></label></div>`,
 
   () => {
-    const dur = TL.total, xaiCost = (settings.xaiRes === "720p" ? 0.07 : 0.05) * TL.scenes.reduce((a, x) => a + clamp(Math.round(x.dur), 1, 15), 0);
+    const dur = TL.total, ai = AI();
     const narrInFile = (P.voice.mode === "upload" || P.voice.mode === "record") && runtime.narrationUrl;
     return head(7, "Clique em gerar e pronto!", "O vídeo é gravado em tempo real a partir da prévia, com animação, música e narração.") +
       `<div class="gen-card">
@@ -1000,20 +1105,34 @@ const VIEWS = [
           <li class="ok"><span class="s">✓</span>${TL.scenes.length} cenas · ${fmtT(dur)} · ${P.format}</li>
           <li class="ok"><span class="s">✓</span>Estilo ${STYLES[P.style]?.name} · música ${MUSIC[P.music]?.name.toLowerCase()}</li>
           <li class="${narrInFile ? "ok" : ""}"><span class="s">${narrInFile ? "✓" : "–"}</span>${narrInFile ? "Narração incluída no arquivo" : (P.voice.mode === "browser" ? "Voz pronta só na prévia (não entra no arquivo)" : "Sem narração no arquivo")}</li>
-          <li class="${Object.keys(runtime.clipVideos).length ? "ok" : ""}"><span class="s">${Object.keys(runtime.clipVideos).length ? "✓" : "–"}</span>${Object.keys(runtime.clipVideos).length ? "Clipes de IA nas cenas" : "Fundos animados do estilo"}</li>
+          <li class="${Object.keys(runtime.clipVideos).length || P.scenes.some(s => s.img) ? "ok" : ""}"><span class="s">${Object.keys(runtime.clipVideos).length || P.scenes.some(s => s.img) ? "✓" : "–"}</span>${Object.keys(runtime.clipVideos).length ? "Clipes de IA nas cenas" : P.scenes.some(s => s.img) ? "Imagens nas cenas" : "Fundos animados do estilo"}</li>
         </ul>
         ${exporting ? `<div class="bar"><i id="expBar"></i></div><div style="display:flex;justify-content:space-between;align-items:center"><span class="mon-note">Gravando… <span id="expPct">0%</span>. Deixe esta aba aberta e visível.</span><button class="btn sm" id="expStop">Cancelar</button></div>`
           : `<button class="btn primary" id="expBtn" style="align-self:flex-start">🎬 Gerar meu vídeo (${fmtT(dur)})</button>`}
         ${runtime.exportUrl && !exporting ? `<video class="result-video" src="${runtime.exportUrl}" controls playsinline></video><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="dlBtn">⬇ Baixar vídeo (.${runtime.exportExt})</button><span class="mon-note" style="align-self:center">${(runtime.exportBlob.size / 1048576).toFixed(1)} MB</span></div>` : ""}
       </div>` +
       `<div class="gen-card" style="margin-top:16px">
-        <h3>🤖 Clipes animados por IA (Grok Imagine · xAI)</h3>
-        <p class="mon-note" style="margin:0">Cada cena vira um clipe animado gerado por IA, usado como fundo do vídeo. Custo estimado: <b>US$ ${xaiCost.toFixed(2)}</b> em ${settings.xaiRes || "480p"}. ${settings.xaiKey ? "Chave da xAI configurada." : "Precisa da chave da xAI (console.x.ai)."}</p>
-        ${P.presenter.type === "photo" && P.presenter.photo ? `<label style="display:flex;gap:8px;align-items:center;font-size:13.5px"><input type="checkbox" id="usePhoto" ${clipUsePhoto ? "checked" : ""}> Usar minha foto como imagem inicial (animar minha foto)</label>` : ""}
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="clipBtn" ${clipsRunning ? "disabled" : ""}>${clipsRunning ? "Gerando clipes…" : (settings.xaiKey ? "Gerar clipes de todas as cenas" : "Configurar chave da xAI")}</button>${Object.keys(runtime.clipVideos).length && !clipsRunning ? `<button class="btn ghost" id="clipClear">Remover clipes</button>` : ""}</div>
+        <h3>🤖 IA paga: clipes e imagens (Grok Imagine · xAI)</h3>
+        <p class="mon-note" style="margin:0">Com a sua chave da xAI, cada cena ganha um fundo criado por IA: vídeo de verdade, sua foto falando ou imagens desenhadas. ${settings.xaiKey ? "<b>Chave da xAI configurada.</b>" : "Precisa da chave da xAI (console.x.ai), paga por uso."}</p>
+        <div><b style="font-size:13px">1. O que a IA vai fazer</b>
+          <div class="grid" style="margin-top:8px">${Object.entries(XAI_MODES).map(([k, m]) => optCard(ai.mode === k, `data-aimode="${k}"`, m.ico, m.name, m.desc)).join("")}</div></div>
+        ${(ai.mode === "avatar" || ai.mode === "personagem") && !P.presenter.photo ? hint(`Este modo usa a sua foto. <button class="btn sm" data-step="3">Enviar foto no passo Apresentador</button>`, "warn") : ""}
+        ${ai.mode === "avatar" ? hint("A narração vem do próprio clipe, falada pela sua foto com a boca sincronizada. A IA tenta seguir o texto de cada cena, mas pode variar um pouco. Confira antes de publicar.") : ""}
+        ${ai.mode === "imagem" ? hint("Use o botão 📷 em cada cena, logo abaixo, para enviar a imagem. Mesmo sem gerar o clipe, a imagem já aparece como fundo com zoom suave, de graça.") : ""}
+        ${ai.mode !== "foto_ia" ? `<div><b style="font-size:13px">2. Modelo</b>
+          <div class="grid" style="margin-top:8px">${Object.entries(XAI_MODELS).map(([k, m]) => optCard(ai.model === k, `data-aimodel="${k}" ${ai.mode === "avatar" && k !== "grok-imagine-video-1.5" ? "disabled" : ""}`, "", m.name + " · " + m.tag, m.desc + " A partir de US$ " + Math.min(...Object.values(m.price)).toFixed(2) + "/s.")).join("")}</div></div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap">
+          <div><b style="font-size:13px">3. Resolução</b><div class="seg" style="margin-top:8px;display:flex">${["480p", "720p", "1080p"].map(r => `<button data-aires="${r}" class="${ai.res === r ? "on" : ""}" ${XAI_MODELS[ai.model].price[r] && !(ai.mode === "personagem" && r === "1080p") ? "" : "disabled style=\"opacity:.4\""}>${r}${XAI_MODELS[ai.model].price[r] ? " · US$ " + XAI_MODELS[ai.model].price[r].toFixed(2) + "/s" : ""}</button>`).join("")}</div></div>
+          <div><b style="font-size:13px">4. Som do clipe</b><div class="seg" style="margin-top:8px;display:flex"><button data-aiaudio="0" class="${!ai.clipAudio ? "on" : ""}" ${ai.mode === "avatar" ? "disabled style=\"opacity:.4\"" : ""}>Mudo (uso a minha música e voz)</button><button data-aiaudio="1" class="${ai.clipAudio ? "on" : ""}">Usar o som da IA</button></div></div>
+        </div>` : ""}
+        <div class="hint" style="margin-top:0"><span>💰</span><div>Custo estimado deste vídeo: <b>US$ ${xaiCost().toFixed(2)}</b> (${ai.mode === "foto_ia" ? TL.scenes.length + " imagens" : TL.scenes.reduce((a, x) => a + clipSeconds(x), 0) + " s de vídeo em " + ai.res}). Valores aproximados, cobrados na conta da xAI de quem gera.</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="clipBtn" ${clipsRunning ? "disabled" : ""}>${clipsRunning ? "Gerando com IA…" : (settings.xaiKey ? (ai.mode === "foto_ia" ? "🎨 Gerar imagens de todas as cenas" : "🤖 Gerar clipes de todas as cenas") : "Colocar a chave da xAI")}</button>${(Object.keys(runtime.clipVideos).length || P.scenes.some(s => s.img)) && !clipsRunning ? `<button class="btn ghost" id="clipClear">Remover fundos de IA</button>` : ""}</div>
+        ${ai.model === "grok-imagine-video" && ai.mode !== "foto_ia" ? `<label class="f" for="aiEdit">Editar clipe com IA (escreva a mudança e use o botão ✏️ na cena)<input id="aiEdit" type="text" placeholder="Ex.: deixe o céu ao entardecer e adicione neve caindo"></label>` : ""}
         <div id="clipRows"></div>
-        ${ENV.viewer ? hint("Esta página publicada não consegue falar com a xAI. Os clipes funcionam na <b>versão para computador</b> que te mandei no chat.", "warn") : ""}
+        <p class="mon-note" style="margin:0">Dica: depois de gerar, clique em 🎬 <b>Finalizar vídeo</b> para juntar tudo com títulos, legendas e música.</p>
+        ${ENV.viewer ? hint("Esta página publicada não consegue falar com a xAI. Use o app no Streamlit ou a versão para computador.", "warn") : ""}
       </div>`;
+
   }
 ];
 let aiBusy = false;
@@ -1037,10 +1156,17 @@ function sceneCard(s, i) {
 }
 function renderClipRows() {
   const el = $("#clipRows"); if (!el) return;
+  const ai = AI();
   el.innerHTML = TL.scenes.map(x => {
-    const j = clipJobs[x.s.id] || (runtime.clipVideos[x.s.id] ? { status: "ok", msg: "Pronto" } : null);
-    const url = x.s.clipUrl;
-    return `<div class="clip-row"><span class="pill">${x.i + 1}</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.s.title)}${j && j.status === "err" ? `<br><small style="color:#ff8a7a;white-space:normal">${esc(j.msg)}</small>` : ""}</span><span style="display:flex;gap:6px;align-items:center">${j ? `<span class="pill ${j.status}">${esc(j.status === "run" ? "Gerando…" : j.status === "ok" ? "Pronto" : "Erro")}</span>` : ""}${url ? `<a class="btn sm ghost" href="${esc(url)}" target="_blank" rel="noopener">Abrir</a>` : ""}${!clipsRunning && settings.xaiKey ? `<button class="btn sm ghost" data-clip="${x.s.id}">${url ? "Refazer" : "Gerar"}</button>` : ""}</span></div>`;
+    const s = x.s, j = clipJobs[s.id] || (runtime.clipVideos[s.id] || (s.img && s.aiImg) ? { status: "ok", msg: "Pronto" } : null);
+    const has = !!s.clipUrl, canAct = !clipsRunning && settings.xaiKey;
+    const imgBtn = ai.mode === "imagem" || ai.mode === "foto_ia" || s.img ? `<label class="btn sm ghost" for="simg-${s.id}" title="Enviar imagem da cena">📷${s.img ? " ✓" : ""}</label><input id="simg-${s.id}" data-simg="${s.id}" type="file" accept="image/*" hidden>` : "";
+    return `<div class="clip-row"><span class="pill">${x.i + 1}</span>
+      <span style="min-width:0"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.title)}</span><small class="mon-note">${clipSeconds(x)} s</small>${j && j.status === "err" ? `<br><small style="color:#ff8a7a">${esc(j.msg)}</small>` : ""}</span>
+      <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">${j ? `<span class="pill ${j.status}">${esc(j.status === "run" ? j.msg : j.status === "ok" ? "Pronto" : "Erro")}</span>` : ""}${imgBtn}
+        ${has ? `<a class="btn sm ghost" href="${esc(s.clipUrl)}" target="_blank" rel="noopener" title="Abrir ou baixar o clipe">Abrir</a>` : ""}
+        ${canAct ? `<button class="btn sm ghost" data-clip="${s.id}">${has || (s.img && s.aiImg) ? "Refazer" : "Gerar"}</button>` : ""}
+        ${canAct && has && ai.model === "grok-imagine-video" ? `<button class="btn sm ghost" data-clipext="${s.id}" title="Estender o clipe em 4 s">➕ 4 s</button><button class="btn sm ghost" data-clipedit="${s.id}" title="Editar com a instrução acima">✏️</button>` : ""}</span></div>`;
   }).join("");
 }
 
@@ -1079,7 +1205,13 @@ document.addEventListener("click", async e => {
   if (d.lang) { P.voice.lang = d.lang; P.voice.voiceName = ""; save(); renderStep(); return; }
   if (d.music) { P.music = d.music; save(); renderStep(); if (d.music !== "none") previewMusic(d.music); return; }
   if (d.cap) { P.captions = d.cap === "1"; save(); renderStep(); return; }
-  if (d.clip) { generateClips(d.clip); return; }
+  if (d.clip) { runAI(d.clip); return; }
+  if (d.clipext) { runAI(d.clipext, "estender"); return; }
+  if (d.clipedit) { runAI(d.clipedit, "editar"); return; }
+  if (d.aimode) { AI().mode = d.aimode; save(); renderStep(); return; }
+  if (d.aimodel) { AI().model = d.aimodel; save(); renderStep(); return; }
+  if (d.aires) { AI().res = d.aires; save(); renderStep(); return; }
+  if (d.aiaudio) { AI().clipAudio = d.aiaudio === "1"; save(); renderStep(); return; }
   if (d.act) {
     const card = t.closest(".scene"); const i = P.scenes.findIndex(s => s.id === card.dataset.sid); if (i < 0) return;
     if (d.act === "del") { if (P.scenes.length <= 1) { toast("O vídeo precisa de pelo menos uma cena."); return; } P.scenes.splice(i, 1); }
@@ -1114,8 +1246,8 @@ document.addEventListener("click", async e => {
       exportVideo(); break;
     case "expStop": stopExport(); break;
     case "dlBtn": downloadExport(); break;
-    case "clipBtn": generateClips(); break;
-    case "clipClear": Object.keys(runtime.clipVideos).forEach(k => delete runtime.clipVideos[k]); P.scenes.forEach(s => delete s.clipUrl); Object.keys(clipJobs).forEach(k => delete clipJobs[k]); save(); renderStep(); break;
+    case "clipBtn": runAI(); break;
+    case "clipClear": Object.keys(runtime.clipVideos).forEach(k => delete runtime.clipVideos[k]); P.scenes.forEach(s => { delete s.clipUrl; delete s.img; delete s.aiImg; delete bgImgs[s.id]; }); Object.keys(clipJobs).forEach(k => delete clipJobs[k]); save(); renderStep(); break;
     case "btnSettings": openSettings(); break;
     case "btnProjects": openProjects(); break;
   }
@@ -1132,7 +1264,7 @@ document.addEventListener("input", e => {
 document.addEventListener("change", async e => {
   const t = e.target;
   if (t.id === "voiceSel") { P.voice.voiceName = t.value; save(); }
-  if (t.id === "usePhoto") { clipUsePhoto = t.checked; }
+  if (t.dataset.simg && t.files[0]) { const s = P.scenes.find(s => s.id === t.dataset.simg); if (s) { try { s.img = await fileToSmallDataURL(t.files[0], 1024); s.aiImg = false; loadSceneImage(s); save(); renderStep(); toast("Imagem da cena adicionada."); } catch (err) { toast("Não consegui abrir essa imagem."); } } }
   if (t.id === "photoIn" && t.files[0]) { try { P.presenter.photo = await fileToSmallDataURL(t.files[0]); loadPhoto(); save(); renderStep(); } catch (err) { toast("Não consegui abrir essa imagem."); } }
   if (t.id === "audIn" && t.files[0]) { setNarration(t.files[0], t.files[0].name); P.voice.mode = "upload"; save(); toast("Áudio carregado."); }
 });
@@ -1163,7 +1295,7 @@ function openProjects() {
     if (ev.target.id === "scrim" || ev.target.id === "closeL") return closeLayer();
     const b = ev.target.closest("button"); if (!b) return; const d = b.dataset;
     if (b.id === "newP") return newProject();
-    if (d.popen) { pause(); clearExport(); P = projects.find(p => p.id === d.popen); player.t = 0; Object.keys(runtime.clipVideos).forEach(k => delete runtime.clipVideos[k]); P.scenes.forEach(s => s.clipUrl && loadClip(s.id, s.clipUrl)); loadPhoto(); save(); closeLayer(); renderStep(); return; }
+    if (d.popen) { pause(); clearExport(); P = projects.find(p => p.id === d.popen); player.t = 0; Object.keys(runtime.clipVideos).forEach(k => delete runtime.clipVideos[k]); P.scenes.forEach(s => s.clipUrl && loadClip(s.id, s.clipUrl)); P.scenes.forEach(loadSceneImage); loadPhoto(); save(); closeLayer(); renderStep(); return; }
     if (d.pdup) { const src = projects.find(p => p.id === d.pdup); const c = JSON.parse(JSON.stringify(src)); c.id = uid(); c.name = src.name + " (cópia)"; c.scenes.forEach(s => s.id = uid()); projects.unshift(c); save(); openProjects(); return; }
     if (d.pdel) { pendingDelete = d.pdel; openProjects(); return; }
     if (d.pcancel) { pendingDelete = null; openProjects(); return; }
@@ -1182,9 +1314,7 @@ function openSettings() {
     <span class="mon-note">Crie a chave em console.groq.com → API Keys. Modelos atuais: openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b.</span>
     <h3 style="margin:14px 0 0;font-family:var(--display)">xAI · clipes animados (Grok Imagine)</h3>
     <label class="f" for="xk">Chave da xAI (começa com xai-)<input id="xk" type="password" autocomplete="off" value="${esc(settings.xaiKey)}" placeholder="xai-..."></label>
-    <label class="f" for="xm">Modelo<input id="xm" type="text" value="${esc(settings.xaiModel)}"></label>
-    <label class="f" for="xr">Resolução<select id="xr"><option ${settings.xaiRes === "480p" ? "selected" : ""}>480p</option><option ${settings.xaiRes === "720p" ? "selected" : ""}>720p</option></select></label>
-    <span class="mon-note">Crie a chave em console.x.ai. Custa cerca de US$ 0,05 por segundo (480p) ou US$ 0,07 (720p).</span>
+    <span class="mon-note">Crie a chave em console.x.ai. O modelo, a resolução e o custo você escolhe no passo Gerar.</span>
     <div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary" type="submit">Salvar</button><button class="btn ghost" type="button" id="clrKeys">Apagar chaves</button></div>
     <p class="mon-note">As chaves ficam salvas só neste navegador, neste computador. Nunca compartilhe suas chaves.</p>
   </form></div>`;
@@ -1192,7 +1322,7 @@ function openSettings() {
   $("#setForm").onsubmit = ev => {
     ev.preventDefault();
     settings.groqKey = $("#gk").value.trim(); settings.groqModel = $("#gm").value.trim() || "openai/gpt-oss-120b";
-    settings.xaiKey = $("#xk").value.trim(); settings.xaiModel = $("#xm").value.trim() || "grok-imagine-video"; settings.xaiRes = $("#xr").value;
+    settings.xaiKey = $("#xk").value.trim();
     saveSettings(); updateEnvBadge(); closeLayer(); renderStep(); toast("Chaves salvas.");
   };
 }
@@ -1220,6 +1350,7 @@ if (INJ && Array.isArray(INJ.scenes) && INJ.scenes.length && INJ.nonce && store.
 }
 loadPhoto();
 P.scenes.forEach(s => s.clipUrl && loadClip(s.id, s.clipUrl));
+P.scenes.forEach(loadSceneImage);
 updateEnvBadge();
 renderStep();
 const fontsToLoad = ['800 40px "Bricolage Grotesque"', '600 40px "Figtree"', '700 40px "Chakra Petch"', '40px "Gochi Hand"', 'italic 600 40px "Fraunces"', '40px "Bebas Neue"', '800 40px "Baloo 2"', '700 40px "Baloo 2"', '800 40px "Manrope"', '600 40px "Manrope"'];
