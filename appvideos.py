@@ -5,6 +5,7 @@ daquela pessoa e não é gravada no servidor. O Python escreve o roteiro com a G
 entrega as cenas para o estúdio animado. Os projetos ficam salvos no navegador de cada um.
 Arquivo único: não precisa de requirements.txt (só usa o Streamlit e a biblioteca padrão).
 """
+import html
 import json
 import re
 import time
@@ -66,7 +67,7 @@ main.wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,420px);g
 @media (max-width:900px){main.wrap{grid-template-columns:minmax(0,1fr)}.monitor{order:-1;position:static!important}}
 
 /* trilha de passos */
-.steps{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:18px;scrollbar-width:thin}
+.steps{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:6px;margin-bottom:18px}
 .step-chip{flex:none;display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:transparent;border-radius:999px;padding:6px 12px 6px 6px;font-size:13px;font-weight:600;color:var(--muted)}
 .step-chip .n{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--panel-2);font-size:12px;font-variant-numeric:tabular-nums}
 .step-chip.done .n{background:#2a3d33;color:var(--ok)}
@@ -198,6 +199,7 @@ details.vis summary{font-size:12px;color:var(--muted);cursor:pointer}
       <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Posição">
       <span class="time" id="timeLbl">0:00 / 0:30</span>
     </div>
+    <button class="btn primary" id="btnFinish" style="width:100%;padding:12px 14px;font-size:15px">🎬 Finalizar vídeo</button>
     <div class="mon-note" id="monNote"></div>
   </aside>
 </main>
@@ -1044,6 +1046,9 @@ function renderStep() {
   const f = fmt(); $("#fmtLbl").textContent = f.id + " · " + fmtT(TL.total);
   $("#monNote").innerHTML = P.voice.mode === "browser" ? "A voz pronta toca na prévia. Clique ▶ para ouvir." : (P.voice.mode === "record" || P.voice.mode === "upload") && !runtime.narrationUrl ? "Sem narração ainda. Grave ou envie o áudio no passo Voz." : "";
   if (step === 7) renderClipRows();
+  const fb = $("#btnFinish");
+  fb.disabled = exporting;
+  fb.textContent = exporting ? "Gravando o vídeo…" : runtime.exportUrl ? "⬇ Baixar vídeo pronto" : "🎬 Finalizar vídeo";
   if (!player.playing) renderFrame(player.t);
   store.set("evs.step", step);
 }
@@ -1091,6 +1096,11 @@ document.addEventListener("click", async e => {
     }
     case "aiStop": aiCtl && aiCtl.abort(); break;
     case "expBtn": exportVideo(); break;
+    case "btnFinish":
+      if (exporting) break;
+      if (runtime.exportUrl) { downloadExport(); break; }
+      step = 7; renderStep(); $("#stepArea").scrollIntoView({ behavior: "smooth", block: "start" });
+      exportVideo(); break;
     case "expStop": stopExport(); break;
     case "dlBtn": downloadExport(); break;
     case "clipBtn": generateClips(); break;
@@ -1179,6 +1189,7 @@ function openSettings() {
 // roteiro entregue pelo servidor (ex.: app no Streamlit, que guarda a chave da Groq em segredo)
 const INJ = window.__EVS_INJECT__;
 if (INJ && INJ.engine) ENV.hostAI = INJ.engine;
+if (INJ && INJ.xaiKey) settings.xaiKey = INJ.xaiKey; // chave da sessão, digitada na tela de entrada
 if (INJ && Array.isArray(INJ.scenes) && INJ.scenes.length && INJ.nonce && store.get("evs.injected", "") !== INJ.nonce) {
   try {
     const np = sampleProject();
@@ -1217,6 +1228,22 @@ if (window.claude && typeof window.claude.use === "function") {
 '''
 
 st.set_page_config(page_title="Estúdio de Vídeos", page_icon="🎬", layout="wide")
+st.markdown("""<style>
+.stApp{background:#100e17;color:#efeaf7}
+header[data-testid="stHeader"]{background:transparent}
+.stApp h1,.stApp h2,.stApp h3,.stApp p,.stApp label,.stApp li,[data-testid="stWidgetLabel"] p,[data-testid="stCaptionContainer"]{color:#efeaf7!important}
+[data-testid="stCaptionContainer"]{opacity:.7}
+[data-testid="stForm"]{background:#1a1724;border:1px solid #332d45;border-radius:16px}
+[data-baseweb="input"],[data-baseweb="input"]>div,[data-baseweb="base-input"],.stApp input,[data-baseweb="select"]>div,[data-baseweb="select"]>div>div{background-color:#100e17!important;border-color:#332d45!important}
+.stApp input::placeholder{color:#7d7592!important;-webkit-text-fill-color:#7d7592!important;opacity:1}
+.stApp input{color:#efeaf7!important;-webkit-text-fill-color:#efeaf7}
+[data-baseweb="select"] div{color:#efeaf7;background-color:#100e17!important}
+[data-baseweb="select"] svg{fill:#a69fba}
+[data-baseweb="input"] button svg{fill:#a69fba}
+.stApp button[kind^="primary"]{background:#ff5a36;border-color:#ff5a36;color:#1a0b06;font-weight:700}
+.stApp button[kind^="primary"]:hover{background:#ff7352;border-color:#ff7352;color:#1a0b06}
+.stApp button[kind^="secondary"]{background:#1a1724;border-color:#332d45;color:#efeaf7}
+</style>""", unsafe_allow_html=True)
 
 
 PURPOSES = {
@@ -1304,22 +1331,90 @@ def groq_script(prompt, key):
     raise last
 
 
+def groq_check(key):
+    """Confere a chave na Groq. Devolve None se estiver ok, ou a mensagem de erro."""
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/models",
+        headers={"Authorization": f"Bearer {key}", "User-Agent": "estudio-de-videos"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20):
+            return None
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return "A Groq recusou essa chave. Confira se copiou a chave inteira."
+        return None  # outros erros não impedem a entrada
+    except urllib.error.URLError:
+        return None  # sem conexão agora: deixa entrar, o erro aparece ao gerar o roteiro
+
+
+# ---------- tela de entrada ----------
+def tela_entrada():
+    st.markdown(
+        "<div style='text-align:center;margin-top:6vh'>"
+        "<div style='font-size:46px'>🎬</div>"
+        "<h1 style='margin:6px 0 4px'>Estúdio de Vídeos</h1>"
+        "<p style='opacity:.75;margin:0'>Crie vídeos animados com roteiro feito por IA.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    _, meio, _ = st.columns([1, 1.3, 1])
+    with meio:
+        with st.form("entrar"):
+            nome = st.text_input("Seu nome", placeholder="Como você quer ser chamado")
+            chave = st.text_input(
+                "Sua chave da Groq",
+                type="password",
+                placeholder="gsk_...",
+                help="Crie grátis em console.groq.com → API Keys.",
+            )
+            xai = st.text_input(
+                "Chave da xAI (opcional)",
+                type="password",
+                placeholder="xai-...",
+                help="Só para gerar clipes animados por IA (Grok Imagine). É paga por uso: console.x.ai.",
+            )
+            entrar = st.form_submit_button("Entrar no app", type="primary", use_container_width=True)
+        st.caption("🔒 Suas chaves valem só nesta sessão. Elas não ficam salvas no servidor e ninguém mais vê.")
+        st.caption("Não tem chave? Entre em console.groq.com, faça login e clique em **API Keys → Create API Key**.")
+
+    if entrar:
+        nome, chave, xai = nome.strip(), chave.strip(), xai.strip()
+        if not nome:
+            st.error("Digite o seu nome.")
+        elif not chave.startswith("gsk_"):
+            st.error("Cole a sua chave da Groq. Ela começa com gsk_.")
+        elif xai and not xai.startswith("xai-"):
+            st.error("A chave da xAI começa com xai-. Deixe em branco se não tiver.")
+        else:
+            with st.spinner("Conferindo a sua chave…"):
+                erro = groq_check(chave)
+            if erro:
+                st.error(erro)
+            else:
+                st.session_state.update(user=nome, groq_key=chave, xai_key=xai)
+                st.rerun()
+
+
+if "user" not in st.session_state:
+    tela_entrada()
+    st.stop()
+
+
 # ---------- topo: gerador de roteiro ----------
-st.markdown(
-    "<h2 style='margin-bottom:0'>🎬 Estúdio de Vídeos</h2>"
+ca, cb = st.columns([5, 1])
+ca.markdown(
+    f"<h2 style='margin-bottom:0'>🎬 Olá, {html.escape(st.session_state['user'])}!</h2>"
     "<p style='opacity:.75;margin-top:4px'>Descreva o vídeo, a IA escreve o roteiro e o estúdio anima. "
     "Depois é só ajustar e clicar em <b>Gerar meu vídeo</b>.</p>",
     unsafe_allow_html=True,
 )
+if cb.button("Sair", use_container_width=True):
+    for k in ("user", "groq_key", "xai_key", "inject"):
+        st.session_state.pop(k, None)
+    st.rerun()
 
 with st.form("roteiro"):
-    user_key = st.text_input(
-        "Sua chave da Groq",
-        type="password",
-        placeholder="gsk_...",
-        help="Crie grátis em console.groq.com → API Keys. A chave vale só nesta sessão e não fica salva no servidor.",
-        key="groq_key",
-    )
     topic = st.text_input("Tema do vídeo", placeholder="Ex.: Promoção de pizza de sexta, 2 por R$ 79")
     c1, c2, c3, c4 = st.columns(4)
     purpose_name = c1.selectbox("Finalidade", list(PURPOSES))
@@ -1329,18 +1424,17 @@ with st.form("roteiro"):
     sent = st.form_submit_button("✨ Gerar roteiro com IA", type="primary")
 
 if sent:
-    key = (user_key or "").strip()
-    if not key.startswith("gsk_"):
-        st.error("Cole a sua chave da Groq (ela começa com gsk_). Crie a sua em console.groq.com → API Keys.")
-    elif not topic.strip():
+    if not topic.strip():
         st.error("Escreva o tema do vídeo.")
     else:
         with st.spinner("Escrevendo o roteiro…"):
             try:
-                scenes = groq_script(build_prompt(topic.strip(), purpose_name, duration, FORMATS[fmt_name], lang_name), key)
+                scenes = groq_script(
+                    build_prompt(topic.strip(), purpose_name, duration, FORMATS[fmt_name], lang_name),
+                    st.session_state["groq_key"],
+                )
                 st.session_state["inject"] = {
                     "nonce": f"{time.time():.3f}",
-                    "engine": "Groq",
                     "topic": topic.strip(),
                     "purpose": PURPOSES[purpose_name],
                     "duration": duration,
@@ -1353,7 +1447,11 @@ if sent:
                 st.error(str(e))
 
 # ---------- estúdio ----------
-inject = st.session_state.get("inject") or {"engine": "Groq"}
+inject = dict(st.session_state.get("inject") or {})
+inject["engine"] = "Groq"
+inject["userName"] = st.session_state["user"]
+if st.session_state.get("xai_key"):
+    inject["xaiKey"] = st.session_state["xai_key"]
 script = "<script>window.__EVS_INJECT__ = " + json.dumps(inject, ensure_ascii=False).replace("</", "<\\/") + ";</script>"
 page = (
     "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
