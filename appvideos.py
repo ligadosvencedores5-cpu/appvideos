@@ -303,8 +303,20 @@ let step = clamp(store.get("evs.step", 0), 0, STEPS.length - 1);
 const runtime = { narrationUrl: "", narrationName: "", narrationDur: 0, clipVideos: {}, exportUrl: "", exportExt: "", exportBlob: null };
 
 let saveTimer;
+function clearExport() {
+  if (exporting || !runtime.exportUrl) return;
+  try { URL.revokeObjectURL(runtime.exportUrl); } catch (e) {}
+  runtime.exportUrl = ""; runtime.exportBlob = null; runtime.exportExt = "";
+  updateFinishBtn();
+}
+function updateFinishBtn() {
+  const fb = document.getElementById("btnFinish"); if (!fb) return;
+  fb.disabled = exporting;
+  fb.textContent = exporting ? "Gravando o vídeo…" : runtime.exportUrl ? "⬇ Baixar vídeo pronto" : "🎬 Finalizar vídeo";
+}
 function save() {
   P.updated = Date.now();
+  clearExport();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     if (!store.set("evs.projects", projects)) {
@@ -966,9 +978,9 @@ const VIEWS = [
   },
 
   () => head(5, "Escreva o texto ou deixe a IA criar", "Cada cena tem um título que aparece grande na tela e a fala da narração.") +
-    `<div class="gen-card"><h3>✨ A IA cria o roteiro</h3><p class="mon-note" style="margin:0">${engineName() ? `Usando <b>${engineName()}</b>. Diga o tema e o que não pode faltar.` : ENV.hostAI ? `O roteiro com IA (${esc(ENV.hostAI)}) é gerado no <b>topo da página</b>, acima do estúdio. As cenas aparecem aqui para você editar.` : "Nenhuma IA conectada: vou montar um roteiro-modelo. Para roteiros de verdade, cole a chave da Groq em <b>Chaves de IA</b> (versão para computador)."}</p>
+    `${!engineName() && ENV.hostAI ? `<div class="gen-card"><h3>✨ Roteiro novo com IA</h3><p class="mon-note" style="margin:0">Para criar um roteiro novo, preencha <b>Tema do vídeo</b> e <b>Descreva o seu serviço ou produto</b> no <b>topo da página</b> e clique em <b>Gerar roteiro com IA</b>. As cenas novas aparecem aqui. Você também pode editar as cenas abaixo à mão.</p></div>` : `<div class="gen-card"><h3>✨ A IA cria o roteiro</h3><p class="mon-note" style="margin:0">${engineName() ? `Usando <b>${engineName()}</b>. Diga o tema e o que não pode faltar.` : ENV.hostAI ? `O roteiro com IA (${esc(ENV.hostAI)}) é gerado no <b>topo da página</b>, acima do estúdio. As cenas aparecem aqui para você editar.` : "Nenhuma IA conectada: vou montar um roteiro-modelo. Para roteiros de verdade, cole a chave da Groq em <b>Chaves de IA</b> (versão para computador)."}</p>
       <label class="f" for="styleDesc">Descreva o seu serviço ou produto<textarea id="styleDesc" rows="3" placeholder="O que é, o que faz, para quem é, diferenciais, preço e contato. Ex.: Pizzaria do Zé, delivery em Campinas, massa de fermentação natural, 2 pizzas grandes por R$ 79 às sextas, pedidos pelo WhatsApp (19) 99999-0000">${esc(P.styleDesc || "")}</textarea></label>
-      <div class="ai-box"><input id="topic" type="text" placeholder="Tema. Ex.: Promoção de pizza de sexta, 2 por R$ 79" value="${esc(P.topic || "")}" aria-label="Tema do vídeo"><button class="btn primary" id="aiBtn" ${aiBusy ? "disabled" : ""}>${aiBusy ? "Escrevendo…" : "Gerar roteiro"}</button>${aiBusy && ENV.sample ? `<button class="btn" id="aiStop">Parar</button>` : ""}</div></div>` +
+      <div class="ai-box"><input id="topic" type="text" placeholder="Tema. Ex.: Promoção de pizza de sexta, 2 por R$ 79" value="${esc(P.topic || "")}" aria-label="Tema do vídeo"><button class="btn primary" id="aiBtn" ${aiBusy ? "disabled" : ""}>${aiBusy ? "Escrevendo…" : "Gerar roteiro"}</button>${aiBusy && ENV.sample ? `<button class="btn" id="aiStop">Parar</button>` : ""}</div></div>`}` +
     `<div class="scenes" id="sceneList">${P.scenes.map((s, i) => sceneCard(s, i)).join("")}</div>` +
     `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="addScene">+ Adicionar cena</button></div>`,
 
@@ -1047,9 +1059,7 @@ function renderStep() {
   const f = fmt(); $("#fmtLbl").textContent = f.id + " · " + fmtT(TL.total);
   $("#monNote").innerHTML = P.voice.mode === "browser" ? "A voz pronta toca na prévia. Clique ▶ para ouvir." : (P.voice.mode === "record" || P.voice.mode === "upload") && !runtime.narrationUrl ? "Sem narração ainda. Grave ou envie o áudio no passo Voz." : "";
   if (step === 7) renderClipRows();
-  const fb = $("#btnFinish");
-  fb.disabled = exporting;
-  fb.textContent = exporting ? "Gravando o vídeo…" : runtime.exportUrl ? "⬇ Baixar vídeo pronto" : "🎬 Finalizar vídeo";
+  updateFinishBtn();
   if (!player.playing) renderFrame(player.t);
   store.set("evs.step", step);
 }
@@ -1134,7 +1144,7 @@ document.addEventListener("keydown", e => {
 /* ============ gaveta de projetos e configurações ============ */
 function closeLayer() { $("#layer").innerHTML = ""; }
 function newProject() {
-  pause();
+  pause(); clearExport();
   const np = sampleProject(); np.name = "Novo vídeo"; np.topic = ""; np.scenes = [{ id: uid(), emoji: "🎬", title: "Seu título aqui", text: "Escreva o que a narração vai falar nesta cena.", visual: "" }];
   projects.unshift(np); P = np; step = 0; player.t = 0; loadPhoto(); save(); closeLayer(); renderStep();
 }
@@ -1153,7 +1163,7 @@ function openProjects() {
     if (ev.target.id === "scrim" || ev.target.id === "closeL") return closeLayer();
     const b = ev.target.closest("button"); if (!b) return; const d = b.dataset;
     if (b.id === "newP") return newProject();
-    if (d.popen) { pause(); P = projects.find(p => p.id === d.popen); player.t = 0; Object.keys(runtime.clipVideos).forEach(k => delete runtime.clipVideos[k]); P.scenes.forEach(s => s.clipUrl && loadClip(s.id, s.clipUrl)); loadPhoto(); save(); closeLayer(); renderStep(); return; }
+    if (d.popen) { pause(); clearExport(); P = projects.find(p => p.id === d.popen); player.t = 0; Object.keys(runtime.clipVideos).forEach(k => delete runtime.clipVideos[k]); P.scenes.forEach(s => s.clipUrl && loadClip(s.id, s.clipUrl)); loadPhoto(); save(); closeLayer(); renderStep(); return; }
     if (d.pdup) { const src = projects.find(p => p.id === d.pdup); const c = JSON.parse(JSON.stringify(src)); c.id = uid(); c.name = src.name + " (cópia)"; c.scenes.forEach(s => s.id = uid()); projects.unshift(c); save(); openProjects(); return; }
     if (d.pdel) { pendingDelete = d.pdel; openProjects(); return; }
     if (d.pcancel) { pendingDelete = null; openProjects(); return; }
