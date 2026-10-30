@@ -244,6 +244,7 @@ const store = {
 };
 let toastTimer;
 function toast(msg, ms = 3200) {
+  if (window.__evsPonteOk) { try { window.parent.postMessage({ evs: "toast", msg: String(msg), ms }, "*"); return; } catch (e) {} } // no app do hub, o aviso aparece na tela da página
   let t = $(".toast"); if (!t) { t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
   t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, ms);
 }
@@ -913,7 +914,7 @@ const usd = v => "US$ " + (v < 0.01 && v > 0 ? v.toFixed(3) : v.toFixed(2));
 const BR = { ok: false, pend: {}, n: 0, tries: 0 };
 window.addEventListener("message", e => {
   const m = e.data; if (!m || typeof m !== "object") return;
-  if (m.evs === "pong") { if (!BR.ok) { BR.ok = true; if (ENV.ponte) bridgeStatus(); } return; }
+  if (m.evs === "pong") { if (!BR.ok) { BR.ok = true; window.__evsPonteOk = true; if (ENV.ponte) bridgeStatus(); } return; }
   if (m.evs === "res" && m.res) { const cb = BR.pend[m.res.reqId]; if (cb) { delete BR.pend[m.res.reqId]; cb(m.res); } }
 });
 function bridgePing() {
@@ -944,23 +945,27 @@ function keyPanel(extra = "") {
     <b style="font-size:15px">🔑 Coloque a sua chave da xAI para usar a IA paga</b>
     <ol style="margin:0;padding-left:20px;font-size:13.5px;color:var(--muted);display:flex;flex-direction:column;gap:4px">
       <li>Clique em <b>Obter minha chave</b>. Abre o site da xAI (em inglês) direto na página <b>API Keys</b> (chaves de API). Se pedir, entre na sua conta.</li>
-      <li>Clique em <b>Create API Key</b> (criar chave), dê um nome e confirme. Copie a chave: ela começa com <b>xai-</b>.</li>
+      <li>Clique em <b>Create API Key</b> (criar chave), dê um nome e confirme. Copie a chave: ela começa com <b>xai-</b> ou <b>grok_</b>.</li>
       <li>Volte aqui, cole a chave no campo abaixo e clique em <b>Salvar chave</b>.</li>
     </ol>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="${XAI_CHAVES}" target="_blank" rel="noopener">🔑 Obter minha chave na xAI</a><a class="btn" href="${XAI_CREDITOS}" target="_blank" rel="noopener">💳 Comprar créditos</a></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="xaiKeyIn" type="password" autocomplete="off" placeholder="Cole aqui a sua chave xai-..." style="flex:1 1 240px;width:auto" aria-label="Chave da xAI"><button class="btn primary" id="xaiKeySave">Salvar chave</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="xaiKeyIn" type="password" autocomplete="off" placeholder="Cole aqui a sua chave da xAI (xai-... ou grok_...)" style="flex:1 1 240px;width:auto" aria-label="Chave da xAI"><button class="btn primary" id="xaiKeySave">Salvar chave</button></div>
+    <div id="xaiKeyMsg" role="status" aria-live="polite" style="font-size:14px;font-weight:600"></div>
     <span class="mon-note">${ENV.ponte ? "A chave vai só para o servidor e vale enquanto você estiver no app. Ela não fica salva no navegador." : "A chave fica salva só neste navegador."} Sem créditos, a chave não gera nada.</span>${extra}
   </div>`;
 }
 let keyBoxOpen = false;
+function keyMsg(txt, ok) { const el = document.getElementById("xaiKeyMsg"); if (el) { el.textContent = txt; el.style.color = ok ? "var(--ok)" : "#ff8a7a"; } }
 async function saveXaiKey() {
   const inp = document.getElementById("xaiKeyIn"); const k = (inp?.value || "").trim();
-  if (!k.startsWith("xai-") || k.length < 20) { toast("Cole a chave da xAI inteira. Ela começa com xai-."); inp?.focus(); return; }
+  if (!k) { keyMsg("Cole a sua chave no campo acima antes de salvar."); toast("Cole a sua chave no campo antes de salvar."); inp?.focus(); return; }
+  if (!/^(xai-|grok_)/.test(k) || k.length < 20) { keyMsg("⚠️ Essa não parece uma chave da xAI. Ela começa com xai- ou grok_. Copie a chave inteira."); toast("Cole a chave da xAI inteira. Ela começa com xai- ou grok_."); inp?.focus(); return; }
   if (ENV.ponte) {
-    if (!BR.ok) { bridgePing(); toast("A conexão com o servidor ainda não ficou pronta. Espere alguns segundos e tente de novo."); return; }
-    const btn = document.getElementById("xaiKeySave"); if (btn) { btn.disabled = true; btn.textContent = "Salvando…"; }
+    if (!BR.ok) { bridgePing(); keyMsg("⏳ A conexão com o servidor ainda está iniciando. Espere alguns segundos e clique de novo."); toast("Espere alguns segundos e tente de novo."); return; }
+    const btn = document.getElementById("xaiKeySave"); if (btn) { btn.disabled = true; btn.textContent = "Conferindo com a xAI…"; }
+    keyMsg("⏳ Conferindo a chave com a xAI…", true);
     try { const r = await bridgeCall("KEY", "setkey", { key: k }); if (!r.ok) throw new Error(r.error || "Não consegui salvar a chave."); }
-    catch (e) { if (btn) { btn.disabled = false; btn.textContent = "Salvar chave"; } toast(e.message || String(e), 5000); return; }
+    catch (e) { if (btn) { btn.disabled = false; btn.textContent = "Salvar chave"; } keyMsg("⚠️ " + (e.message || String(e))); toast(e.message || String(e), 6000); return; }
   }
   settings.xaiKey = ENV.ponte ? "__servidor__" : k; if (!ENV.ponte) saveSettings();
   keyBoxOpen = false; closeLayer(); renderStep(); toast("Chave da xAI conectada. Agora é só gerar!");
@@ -1686,10 +1691,9 @@ function openSettings() {
   if (ENV.hostAI) {
     L.innerHTML = `<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-label="Chaves de IA">
       <div style="display:flex;justify-content:space-between;align-items:center"><h2>Chaves de IA</h2><button type="button" class="btn sm ghost" id="closeL">Fechar</button></div>
-      <ul class="checklist"><li class="ok"><span class="s">✓</span>Groq (roteiros e chat): conectada</li>
-      <li class="${settings.xaiKey ? "ok" : ""}"><span class="s">${settings.xaiKey ? "✓" : "–"}</span>xAI (IA paga): ${settings.xaiKey ? "conectada" : "ainda não colocada"}</li></ul>
+      <ul class="checklist"><li class="${settings.xaiKey ? "ok" : ""}"><span class="s">${settings.xaiKey ? "✓" : "–"}</span>Chave do Grok Imagine (xAI): ${settings.xaiKey ? "conectada (roteiros, chat, vídeos, imagens e voz)" : "ainda não colocada"}</li></ul>
+      <p class="mon-note">Para trocar a sua chave, use o quadro abaixo.</p>
       ${keyPanel()}
-      <p class="mon-note">Para trocar a chave da Groq, clique em <b>Sair</b> no topo da página e entre de novo.</p>
     </div></div>`;
     $("#scrim").onclick = ev => { if (ev.target.id === "scrim" || ev.target.id === "closeL") closeLayer(); };
     return;
@@ -1703,7 +1707,7 @@ function openSettings() {
     <label class="f" for="gm">Modelo<input id="gm" type="text" value="${esc(settings.groqModel)}"></label>
     <span class="mon-note">Crie a chave em console.groq.com → API Keys. Modelos atuais: openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b.</span>
     <h3 style="margin:14px 0 0;font-family:var(--display)">xAI · clipes animados (Grok Imagine)</h3>
-    <label class="f" for="xk">Chave da xAI (começa com xai-)<input id="xk" type="password" autocomplete="off" value="${esc(settings.xaiKey)}" placeholder="xai-..."></label>
+    <label class="f" for="xk">Chave da xAI (começa com xai- ou grok_)<input id="xk" type="password" autocomplete="off" value="${esc(settings.xaiKey)}" placeholder="xai-... ou grok_..."></label>
     <span class="mon-note">Crie a chave em console.x.ai. O modelo, a resolução e o custo você escolhe no passo Gerar.</span>
     <div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary" type="submit">Salvar</button><button class="btn ghost" type="button" id="clrKeys">Apagar chaves</button></div>
     <p class="mon-note">As chaves ficam salvas só neste navegador, neste computador. Nunca compartilhe suas chaves.</p>
@@ -2054,6 +2058,11 @@ header[data-testid="stHeader"]{background:transparent}
 .stApp [data-baseweb="tab"] p{color:#efeaf7!important}
 .stApp [data-baseweb="tab-highlight"]{background:#ff5a36}
 .stApp code{background:#231f30;color:#ffb39f}
+[data-testid="stLinkButton"] a{background:#1a1724!important;border:1px solid #4a4262!important;color:#efeaf7!important;font-weight:600}
+[data-testid="stLinkButton"] a *{color:#efeaf7!important}
+[data-testid="stLinkButton"] a:hover{border-color:#ff5a36!important}
+[data-testid="stLinkButton"] a[kind^="primary"],[data-testid="stLinkButton"] a[data-testid*="Primary"]{background:#ff5a36!important;border-color:#ff5a36!important}
+[data-testid="stLinkButton"] a[kind^="primary"] *,[data-testid="stLinkButton"] a[data-testid*="Primary"] *{color:#1a0b06!important}
 [data-testid="stChatMessage"]{background:transparent}
 [data-testid="stChatInput"],[data-testid="stChatInput"]>div,[data-testid="stChatInput"] textarea{background-color:#100e17!important;color:#efeaf7!important;border-color:#332d45!important}
 [data-testid="stVerticalBlockBorderWrapper"]{border-color:#332d45!important}
@@ -2074,8 +2083,10 @@ VISUAIS = {
 }
 
 
-GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
-GROQ_BASE = os.environ.get("EVS_GROQ_BASE", "https://api.groq.com/openai/v1/")  # só muda em testes
+GROQ_MODELS = ["grok-4.3", "grok-4.20-0309-non-reasoning", "grok-4.7"]  # modelos de texto da xAI (Grok), do mais barato ao mais capaz
+XAI_CREDITOS_URL = "https://console.x.ai/team/default/billing"
+XAI_CHAVES_URL = "https://console.x.ai/team/default/api-keys"
+MSG_SEM_CREDITOS = "Sua conta da xAI está sem créditos. Compre créditos (a partir de 5 dólares, sem mensalidade) para usar a IA."
 
 
 def build_prompt(topic, purpose_name, duration, fmt, lang_name, style_desc="", visual_name=""):
@@ -2105,15 +2116,26 @@ Responda somente com JSON neste formato:
 {{"scenes":[{{"title":"...","text":"...","emoji":"🙂","visual":"..."}}],"post":{{"legenda":"...","cta":"...","hashtags":["..."]}}}}"""
 
 
+def erro_xai_texto(code, msg):
+    m = (msg or "").lower()
+    if code in (402,) or any(w in m for w in ("credit", "billing", "balance", "spending limit", "insufficient")):
+        return RuntimeError(MSG_SEM_CREDITOS)
+    if code in (401, 403):
+        return RuntimeError("A xAI recusou a sua chave. Clique em Sair e entre de novo com a chave correta.")
+    if code == 429:
+        return RuntimeError("Muitos pedidos seguidos na xAI. Espere um minuto e tente de novo.")
+    return RuntimeError(f"xAI ({code}): {msg or 'erro'}", code)
+
+
 def groq_call(prompt, key, model):
+    """Pede uma resposta em JSON ao Grok (IA de texto da xAI)."""
     body = json.dumps({
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": prompt + "\n\nResponda somente com o JSON, sem texto antes ou depois."}],
         "temperature": 0.8,
-        "response_format": {"type": "json_object"},
     }).encode("utf-8")
     req = urllib.request.Request(
-        GROQ_BASE + "chat/completions",
+        XAI_BASE + "chat/completions",
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "estudio-de-videos"},
         method="POST",
@@ -2122,18 +2144,15 @@ def groq_call(prompt, key, model):
         with urllib.request.urlopen(req, timeout=90) as r:
             data = json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        if e.code == 401:
-            raise RuntimeError("A Groq recusou essa chave. Confira se copiou a chave inteira (começa com gsk_).")
-        if e.code == 429:
-            raise RuntimeError("A sua chave da Groq atingiu o limite de uso. Espere um pouco e tente de novo.")
         try:
-            msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
+            j = json.loads(e.read().decode("utf-8") or "{}")
+            msg = j.get("error", {}).get("message", "") if isinstance(j.get("error"), dict) else str(j.get("error") or j.get("message") or "")
         except Exception:
             msg = ""
-        raise RuntimeError(f"Groq ({e.code}): {msg or e.reason}", e.code)
+        raise erro_xai_texto(e.code, msg or e.reason)
     except urllib.error.URLError as e:
-        raise RuntimeError(f"Não consegui conectar à Groq: {e.reason}")
-    content = data["choices"][0]["message"]["content"]
+        raise RuntimeError(f"Não consegui conectar à xAI: {e.reason}")
+    content = data["choices"][0]["message"]["content"] or ""
     m = re.search(r"\{[\s\S]*\}", content)
     if not m:
         raise RuntimeError("A IA não respondeu no formato esperado. Tente de novo.")
@@ -2157,25 +2176,7 @@ def groq_script(prompt, key):
     raise last
 
 
-groq_json = groq_script  # pede uma resposta em JSON à Groq, com troca automática de modelo
-
-
-def groq_check(key):
-    """Confere a chave na Groq. Devolve None se estiver ok, ou a mensagem de erro."""
-    req = urllib.request.Request(
-        GROQ_BASE + "models",
-        headers={"Authorization": f"Bearer {key}", "User-Agent": "estudio-de-videos"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20):
-            return None
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            return "A Groq recusou essa chave. Confira se copiou a chave inteira."
-        return None  # outros erros não impedem a entrada
-    except urllib.error.URLError:
-        return None  # sem conexão agora: deixa entrar, o erro aparece ao gerar o roteiro
-
+groq_json = groq_script  # pede uma resposta em JSON ao Grok (xAI), com troca automática de modelo
 
 
 # ---------- chat de dúvidas ----------
@@ -2183,18 +2184,19 @@ CONHECIMENTO = """
 SOBRE O APP "Estúdio de Vídeos":
 - Cria vídeos animados para redes sociais (Reels, Stories, TikTok, YouTube, WhatsApp, anúncios).
 - É uma ponte entre a pessoa e IAs profissionais: cada um usa a própria chave, sem assinatura mensal.
-- Roteiros: feitos pela Groq (chave grátis, começa com gsk_). Clipes e imagens com IA: xAI / Grok Imagine (chave paga por uso, começa com xai-).
+- Uma chave só: a chave do Grok Imagine (xAI), que começa com xai- ou grok_. É obrigatória para entrar. Ela liga toda a IA: roteiros, calendário, chat de dúvidas, texto do post, tradução, clipes, imagens e voz. Criar a chave é grátis; a IA usa créditos pré-pagos da xAI (sem mensalidade).
+- O topo do app tem duas abas: "🎬 Vídeos gratuitos" (modelos prontos por nicho, roteiro escrito pela pessoa, fundos animados, marca, música; não gasta créditos) e "⭐ Vídeos pagos (IA profissional)" (nota "Vídeos profissionais sem assinatura mensal", botão de comprar créditos e as sub-abas "✨ Roteiro com IA", "📅 Meu mês de conteúdo" e "🎥 Clipes, imagens e voz").
+- Custos de texto: roteiro com IA menos de 1 centavo de dólar; calendário do mês cerca de 1 centavo; cada mensagem do chat frações de centavo.
+- Sem créditos: os vídeos gratuitos funcionam; a IA mostra o aviso "Sua conta da xAI está sem créditos" com o botão de comprar.
 - As chaves valem só na sessão; não ficam salvas no servidor. Ao clicar em Sair ou fechar, precisa colar de novo.
 
-COMO CRIAR A CHAVE DA GROQ: console.groq.com -> criar conta ou entrar (pode ser com Google) -> API Keys -> Create API Key -> copiar (aparece uma vez).
 COMO CRIAR A CHAVE DA xAI (site em inglês): console.x.ai -> Sign up/Sign in (criar conta/entrar com X, Google ou e-mail; se pedir Create team, criar com qualquer nome) -> comprar créditos direto no link https://console.x.ai/team/default/billing (ou Settings -> Team -> Billing) -> API spend management -> Purchase credits (cartão de crédito, entra na hora; 5 a 10 dólares dão vários vídeos; sem mensalidade; Auto top-up é recarga automática opcional). No app também há o botão "💳 Comprar créditos na xAI" na seção IA paga. -> Back (voltar) -> no menu principal da esquerda, API Keys -> Create API Key -> Name: appvideos -> Create/Save -> Copy (a chave começa com xai- e aparece uma vez). Criar a chave é grátis; só cobra ao gerar.
-NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe) e chaves criadas no painel do Cursor (tipo Cursor, começando com grok_). Só serve a chave xai- criada em console.x.ai.
+NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe). A chave certa é criada em console.x.ai -> API Keys e pode começar com xai- ou grok_. O app confere a chave direto na xAI ao entrar ou ao salvar no passo 8; se a xAI recusar, aparece um aviso.
 Tradução dos menus da xAI: Usage = uso/gastos, Models = modelos, Team members = membros, Security = segurança, Audit Log = registro de atividades, Domains = domínios, Observability = monitoramento.
-COMO CRIAR A CHAVE DA GROQ (site em inglês): console.groq.com -> Sign up/Log in (Continue with Google) -> API Keys -> Create API Key -> Display name -> Submit -> Copy (começa com gsk_, aparece uma vez).
 
-DOIS CAMINHOS: (A) VÍDEO SIMPLES GRÁTIS = só chave Groq, fundos animados do app, passos abaixo. (B) VÍDEO PROFISSIONAL = chaves Groq + xAI: gerar roteiro no topo, depois passo 8 Gerar > seção IA paga > escolher modo, modelo (Lite barato / 1.5 melhor), resolução (comece 480p), conferir custo, Gerar clipes de todas as cenas (ou só uma para testar), esperar Pronto, depois Finalizar vídeo e Baixar.
+DOIS CAMINHOS: (A) VÍDEO GRATUITO = aba "🎬 Vídeos gratuitos": modelo pronto por nicho (ou roteiro escrito à mão no passo 6), fundos animados do app, sem gastar créditos. (B) VÍDEO PAGO = aba "⭐ Vídeos pagos": gerar roteiro com IA, depois passo 8 Gerar > seção IA paga > escolher modo, modelo (Lite barato / 1.5 melhor), resolução (comece 480p), conferir custo, Gerar clipes de todas as cenas (ou só uma para testar), esperar Pronto, depois Finalizar vídeo e Baixar.
 PASSO A PASSO DO VÍDEO:
-1. No topo: Tema do vídeo + "Descreva o seu serviço ou produto" (o que é, o que faz, para quem, diferenciais, preço, contato).
+1. Roteiro com IA (aba ⭐ Vídeos pagos → ✨ Roteiro com IA): Tema do vídeo + "Descreva o seu serviço ou produto" (o que é, o que faz, para quem, diferenciais, preço, contato).
 2. Escolher Finalidade, Formato (Vertical 9:16 para Reels/Stories, Horizontal 16:9 para YouTube, Quadrado 1:1 para feed), Duração (15/30/60/90 s), Idioma e Estilo visual.
 3. Clicar em "Gerar roteiro com IA". O roteiro abre no estúdio, passo Roteiro: cada cena tem título (texto grande) e fala. Pode editar, apagar, adicionar e reordenar cenas.
 4. Passos do estúdio: 1 Finalidade, 2 Formato, 3 Estilo (Vibrante, Neon, Lousa e giz, Aquarela, Cinema, Infantil, Empresa), 4 Apresentador (sem, personagem/emoji, minha foto), 5 Voz, 6 Roteiro, 7 Música (Animada, Calma, Épica, sem música; legendas; marca/@ no canto), 8 Gerar.
@@ -2220,8 +2222,8 @@ RECURSOS COMPLETOS DA IA PAGA (abas Vídeo, Imagens, Voz da IA no passo 8):
 - Modo adulto do Grok não existe na API e não está no app.
 RECURSOS DE ASSOCIADO (todos dentro do app):
 1) KIT DA MARCA (botão "🎨 Minha marca", no topo do estúdio): a pessoa cadastra uma vez o nome do negócio, frase de efeito, logo (PNG com fundo transparente fica melhor), cor principal, cor de fundo da cena final, WhatsApp, Instagram, site e endereço. Opções: usar a marca nos vídeos; mostrar logo e @ no canto; cena final de contato no fim de todo vídeo (3 a 6 s); QR code na cena final que abre o WhatsApp (se não tiver WhatsApp, abre o site ou o Instagram). Botão "Ver a cena final" mostra como fica. A marca fica salva no navegador e entra no backup. Não custa nada.
-2) MODELOS PRONTOS POR NICHO (aba "📋 Modelos prontos por nicho", no topo da página): 12 nichos (restaurante/pizzaria, salão/barbearia/estética, imobiliária/corretor, construção/reforma/engenharia, clínica/saúde, advocacia/contabilidade/consultoria, loja de roupas, academia/personal, cursos/mentoria, eventos/festas/igreja, pet shop/veterinária, outro negócio) e 3 tipos de vídeo em cada um (🔥 Oferta ou promoção, 🏪 Conheça o meu negócio, 💡 Dica de especialista). Preenche nome do negócio, produto ou serviço, oferta (opcional), cidade e WhatsApp (opcionais) e clica em "Criar vídeo com este modelo". Não usa IA, é instantâneo e grátis. Já vem com estilo, música e texto do post.
-3) MEU MÊS DE CONTEÚDO (aba "📅 Meu mês de conteúdo"): descreve o negócio, escolhe nicho, objetivo (vender mais, ganhar seguidores, mostrar autoridade, lançar produto, trazer clientes para a loja), frequência (3 por semana, 5 por semana ou todo dia) e a data de início. A IA (Groq, grátis) monta até 30 ideias com data, tipo (oferta, dica, bastidores, depoimento, antes e depois, data comemorativa...), título, gancho (primeira frase) e o que mostrar. Em cada ideia: botão "🎬 Criar este vídeo" (gera o roteiro e abre no estúdio) e caixa "Feito" para acompanhar o progresso. Botão "Baixar calendário (planilha CSV)" abre no Excel/Google Planilhas. O calendário fica na sessão: baixe a planilha para guardar.
+2) MODELOS PRONTOS POR NICHO (aba "🎬 Vídeos gratuitos", no topo da página): 12 nichos (restaurante/pizzaria, salão/barbearia/estética, imobiliária/corretor, construção/reforma/engenharia, clínica/saúde, advocacia/contabilidade/consultoria, loja de roupas, academia/personal, cursos/mentoria, eventos/festas/igreja, pet shop/veterinária, outro negócio) e 3 tipos de vídeo em cada um (🔥 Oferta ou promoção, 🏪 Conheça o meu negócio, 💡 Dica de especialista). Preenche nome do negócio, produto ou serviço, oferta (opcional), cidade e WhatsApp (opcionais) e clica em "Criar vídeo com este modelo". Não usa IA, é instantâneo e grátis. Já vem com estilo, música e texto do post.
+3) MEU MÊS DE CONTEÚDO (aba "⭐ Vídeos pagos" → "📅 Meu mês de conteúdo"; usa créditos, cerca de 1 centavo): descreve o negócio, escolhe nicho, objetivo (vender mais, ganhar seguidores, mostrar autoridade, lançar produto, trazer clientes para a loja), frequência (3 por semana, 5 por semana ou todo dia) e a data de início. A IA (Grok) monta até 30 ideias com data, tipo (oferta, dica, bastidores, depoimento, antes e depois, data comemorativa...), título, gancho (primeira frase) e o que mostrar. Em cada ideia: botão "🎬 Criar este vídeo" (gera o roteiro e abre no estúdio) e caixa "Feito" para acompanhar o progresso. Botão "Baixar calendário (planilha CSV)" abre no Excel/Google Planilhas. O calendário fica na sessão: baixe a planilha para guardar.
 4) TEXTO DO POST: todo roteiro gerado (com IA ou modelo) vem com legenda, chamada para ação e hashtags. Aparece no topo ("📝 Texto do post para copiar", com ícone de copiar) e no estúdio, passo 8 · Gerar, no quadro "📝 Texto do post" (botões "Copiar texto" e "Gerar de novo", que escreve de novo com base no roteiro atual e nos contatos da marca).
 5) UM VÍDEO, TRÊS FORMATOS: passo 8 · Gerar, botão "📐 Gerar nos 3 formatos": grava o mesmo vídeo em 9:16 (Reels/Stories/TikTok), 1:1 (feed) e 16:9 (YouTube), um depois do outro (leva 3 vezes a duração do vídeo; deixe a aba aberta). Depois aparecem 3 botões para baixar cada um.
 6) BACKUP: em "Meus vídeos" (topo do estúdio): "💾 Baixar backup" salva um arquivo .json com todos os vídeos e a marca; "📂 Restaurar backup" abre esse arquivo em outro computador ou celular. Os projetos ficam salvos no navegador; o backup protege contra troca de aparelho ou limpeza do navegador. (Salvar na nuvem automaticamente ainda não existe.)
@@ -2244,7 +2246,7 @@ def groq_chat(messages, key):
     for model in GROQ_MODELS:
         body = json.dumps({"model": model, "messages": messages, "temperature": 0.5}).encode("utf-8")
         req = urllib.request.Request(
-            GROQ_BASE + "chat/completions",
+            XAI_BASE + "chat/completions",
             data=body,
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "estudio-de-videos"},
             method="POST",
@@ -2254,19 +2256,16 @@ def groq_chat(messages, key):
                 data = json.loads(r.read().decode("utf-8"))
             return (data["choices"][0]["message"].get("content") or "").strip() or "Não consegui responder agora. Tente perguntar de outro jeito."
         except urllib.error.HTTPError as e:
-            if e.code == 401:
-                raise RuntimeError("A Groq recusou a sua chave. Clique em Sair e entre de novo com a chave correta.")
-            if e.code == 429:
-                raise RuntimeError("A sua chave da Groq atingiu o limite de uso. Espere um pouco e tente de novo.")
             try:
-                msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
+                j = json.loads(e.read().decode("utf-8") or "{}")
+                msg = j.get("error", {}).get("message", "") if isinstance(j.get("error"), dict) else str(j.get("error") or j.get("message") or "")
             except Exception:
                 msg = ""
-            last = RuntimeError(f"Groq ({e.code}): {msg or e.reason}")
-            if not (e.code in (400, 404) and "model" in msg.lower()):
+            last = erro_xai_texto(e.code, msg or e.reason)
+            if not (e.code in (400, 404) and "model" in (msg or "").lower()):
                 raise last
         except urllib.error.URLError as e:
-            raise RuntimeError(f"Não consegui conectar à Groq: {e.reason}")
+            raise RuntimeError(f"Não consegui conectar à xAI: {e.reason}")
     raise last
 
 
@@ -2300,9 +2299,9 @@ def chat_duvidas():
                 with st.spinner("Pensando…"):
                     try:
                         msgs = [{"role": "system", "content": SISTEMA_CHAT}] + hist[-12:]
-                        resposta = groq_chat(msgs, st.session_state["evs_groq"])
+                        resposta = groq_chat(msgs, st.session_state["evs_xai"])
                     except Exception as e:  # noqa: BLE001
-                        resposta = f"⚠️ {e}"
+                        resposta = f"⚠️ {e}" + (f"\n\n👉 [💳 Comprar créditos na xAI]({XAI_CREDITOS_URL})" if "crédito" in str(e) else "")
                 st.markdown(resposta)
             hist.append({"role": "assistant", "content": resposta})
     if hist and st.button("🧹 Limpar conversa"):
@@ -2325,6 +2324,17 @@ export default function(component) {
       const m = ev.data;
       if (!m || typeof m !== "object") return;
       if (m.evs === "ping") { try { ev.source.postMessage({ evs: "pong" }, "*"); } catch (e) {} return; }
+      if (m.evs === "toast") {
+        let t = document.getElementById("evsToast");
+        if (!t) {
+          t = document.createElement("div"); t.id = "evsToast"; t.setAttribute("role", "status");
+          t.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:999999;max-width:min(560px,calc(100% - 32px));background:#efeaf7;color:#100e17;padding:12px 18px;border-radius:12px;font:600 15px/1.4 system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.45);transition:opacity .2s";
+          document.body.appendChild(t);
+        }
+        t.textContent = String(m.msg || "").slice(0, 400); t.style.opacity = "1"; t.style.display = "block";
+        clearTimeout(G.toastTimer); G.toastTimer = setTimeout(() => { t.style.opacity = "0"; setTimeout(() => { t.style.display = "none"; }, 250); }, Math.min(Math.max(+m.ms || 3500, 2500), 9000));
+        return;
+      }
       if (m.evs !== "req" || !m.req) return;
       G.src = ev.source; G.queue.push(m.req); G.flush();
     });
@@ -2357,6 +2367,21 @@ XAI_BASE = os.environ.get("EVS_XAI_BASE", "https://api.x.ai/v1/")  # só muda em
 XAI_POST = {"videos/generations", "videos/extensions", "videos/edits", "images/generations", "images/edits", "tts"}
 XAI_GET = re.compile(r"^videos/[A-Za-z0-9_-]{4,100}$")
 MAX_CLIPE = 80 * 1024 * 1024
+
+
+def xai_prefixo_ok(k):
+    return k.startswith(("xai-", "grok_")) and 20 <= len(k) <= 300
+
+
+def xai_check(key):
+    """Confere a chave direto na xAI. Devolve None se estiver ok (ou se não der para conferir agora)."""
+    try:
+        status, _ = xai_http("GET", "api-key", None, key)
+    except Exception:  # noqa: BLE001
+        return None
+    if status in (401, 403):
+        return "A xAI recusou essa chave. Confira se copiou a chave inteira, criada em console.x.ai → API Keys."
+    return None
 
 
 def xai_http(method, path, body, key):
@@ -2397,20 +2422,22 @@ def atender_lote(lote):
         if r.get("method") == "STATUS":  # o estúdio pergunta se já tem chave da xAI
             saida.append({"reqId": rid, "ok": True, "status": 200, "json": {"hasXai": bool(st.session_state.get("evs_xai"))}})
             continue
-        if r.get("method") == "GROQ":  # texto do post, tradução etc.: a Groq é chamada pelo servidor
+        if r.get("method") == "GROQ":  # texto do post, tradução etc.: o Grok (xAI) é chamado pelo servidor
             prompt = str((r.get("body") or {}).get("prompt", ""))[:20000]
             try:
-                saida.append({"reqId": rid, "ok": True, "status": 200, "json": groq_json(prompt, st.session_state.get("evs_groq", ""))})
+                saida.append({"reqId": rid, "ok": True, "status": 200, "json": groq_json(prompt, st.session_state.get("evs_xai", ""))})
             except Exception as e:  # noqa: BLE001
                 saida.append({"reqId": rid, "ok": False, "status": 0, "error": str(e)})
             continue
         if r.get("method") == "KEY":  # a pessoa colou a chave dentro do estúdio: guarda só no servidor
             nova = str((r.get("body") or {}).get("key", "")).strip()
-            if nova.startswith("xai-") and 20 <= len(nova) <= 300:
+            erro = None if xai_prefixo_ok(nova) else "Essa chave não parece da xAI. Ela começa com xai- ou grok_."
+            erro = erro or xai_check(nova)
+            if not erro:
                 st.session_state["evs_xai"] = nova
                 saida.append({"reqId": rid, "ok": True, "status": 200, "json": {"hasXai": True}})
             else:
-                saida.append({"reqId": rid, "ok": False, "status": 400, "error": "Essa chave não parece da xAI. Ela começa com xai-."})
+                saida.append({"reqId": rid, "ok": False, "status": 400, "error": erro})
             continue
         chave = st.session_state.get("evs_xai", "")
         metodo = "POST" if r.get("method") == "POST" else "GET"
@@ -2455,22 +2482,8 @@ def montar_ponte():
 
 
 # ---------- tutorial para leigos ----------
-GUIA_GROQ = """
-**Chave da Groq (grátis, obrigatória: é ela que escreve os roteiros)** · [abrir site](https://console.groq.com/keys)
-
-O site é em inglês. Ao lado de cada botão está o que ele significa.
-
-1. Clique aqui para abrir: 👉 **[console.groq.com/keys](https://console.groq.com/keys)** (abre em outra aba).
-2. Clique em **Sign up** (criar conta) ou **Log in** (entrar). O mais fácil é **Continue with Google** (continuar com o Google).
-3. Se não abrir direto, no menu da esquerda clique em **API Keys** (chaves de API).
-4. Clique em **Create API Key** (criar chave de API).
-5. No campo **Display name** (nome), escreva qualquer nome, por exemplo `appvideos`, e clique em **Submit** (enviar).
-6. Aparece a chave, começando com **gsk_**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
-   Cole num bloco de notas e guarde num lugar seguro.
-7. Cole a chave no campo **Sua chave da Groq**, na tela de entrada deste app.
-"""
 GUIA_XAI = """
-**Chave da xAI (opcional, paga por uso: para clipes e imagens feitos por IA)** · [abrir site](https://console.x.ai)
+**Sua chave do Grok Imagine (xAI)**: é ela que liga toda a IA do app (roteiros, calendário, chat, clipes, imagens e voz) · [abrir site](https://console.x.ai)
 
 O site também é em inglês. Ao lado de cada botão está o que ele significa.
 
@@ -2496,13 +2509,13 @@ O site também é em inglês. Ao lado de cada botão está o que ele significa.
    Se preferir pelo menu: no menu principal da esquerda, clique em **API Keys**.
 9. Clique em **Create API Key** (criar chave de API). Em **Name** (nome), escreva `appvideos`.
    Deixe as permissões como estão e clique em **Create** / **Save** (criar / salvar).
-10. A chave aparece começando com **xai-**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
-11. Cole a chave no campo **Chave da xAI (opcional)**, na tela de entrada deste app.
-    Já entrou sem ela? Sem problema: no estúdio, vá ao passo **8 · Gerar**, cole no campo **🔑 Coloque a sua chave da xAI** e clique em **Salvar chave**.
+10. A chave aparece começando com **xai-** ou **grok_** (a xAI usa os dois formatos). Clique em **Copy** (copiar). Ela só aparece **uma vez**.
+11. Cole a chave no campo **Sua chave do Grok Imagine (xAI)**, na tela de entrada deste app, e clique em **Entrar no app**.
+    Para trocar a chave depois: no estúdio, passo **8 · Gerar**, botão **Trocar chave**.
 
 **Atenção, para não confundir:**
 - **Management Keys** (chaves de gerenciamento), no menu de configurações, **não servem** para este app. Elas servem para administrar a equipe.
-- Chaves criadas **no painel do Cursor** (tipo "Cursor", começando com `grok_`) também **não servem**. Use só a chave **xai-** criada em **console.x.ai**.
+- Crie a chave em **console.x.ai** → **API Keys**. O app confere a chave direto na xAI quando você coloca: se ela não servir, aparece um aviso na hora.
 - Outros itens do menu: **Usage** (uso / quanto já gastou), **Models** (modelos), **Team members** (membros da equipe), **Security** (segurança).
 """
 
@@ -2510,7 +2523,7 @@ O site também é em inglês. Ao lado de cada botão está o que ele significa.
 def tutorial(aberto):
     with st.expander("📘 Tutorial: como usar o app (comece por aqui)", expanded=aberto):
         t1, ts, tp, ta, t2, t4, t5, t6 = st.tabs(
-            ["1. O que é", "🎬 Vídeo simples (grátis)", "⭐ Vídeo profissional", "🎁 Recursos de associado", "As chaves", "Voz", "IA paga: detalhes", "Problemas comuns"]
+            ["1. O que é", "🎬 Vídeos gratuitos", "⭐ Vídeos pagos", "🎁 Recursos de associado", "As chaves", "Voz", "IA paga: detalhes", "Problemas comuns"]
         )
         with t1:
             st.markdown("""
@@ -2519,17 +2532,17 @@ def tutorial(aberto):
 Você escreve o tema e descreve o seu serviço. A inteligência artificial escreve o roteiro, e o app monta o vídeo
 com animação, títulos, legendas, música e, se quiser, a sua foto ou um personagem.
 
-**Por que é diferente:** o app é uma **ponte** entre você e as IAs profissionais. Você usa a sua própria chave
-e **não paga assinatura mensal**. Os roteiros são grátis, e os clipes com IA saem a partir de poucos reais por vídeo.
+**Por que é diferente:** o app é uma **ponte** entre você e a IA profissional **Grok Imagine (xAI)**. Você usa a sua própria chave
+e **não paga assinatura mensal**: paga só o que usar, direto na sua conta da xAI.
 
 **Do que você precisa:**
 - Um computador ou celular com **Chrome** ou **Edge** (é onde funciona melhor).
-- Uma **chave da Groq** (grátis), para os roteiros.
-- Uma **chave da xAI** (opcional), só se quiser clipes e imagens feitos por IA.
+- A sua **chave do Grok Imagine (xAI)**. Criar a chave é grátis (veja a aba **As chaves**).
+- **Créditos na xAI** só para os recursos de IA. Os vídeos gratuitos não gastam nada.
 
 **Dois jeitos de criar:**
-- **🎬 Vídeo simples (grátis):** fundos animados, títulos, legendas e música. Só com a chave da Groq.
-- **⭐ Vídeo profissional:** cenas de vídeo feitas por IA ou a sua foto falando. Com a chave da xAI, paga por uso.
+- **🎬 Vídeos gratuitos:** modelos prontos do seu nicho ou roteiro escrito por você, com fundos animados, sua marca, legendas e música.
+- **⭐ Vídeos pagos (IA profissional):** roteiro e calendário com IA, cenas de vídeo feitas por IA, a sua foto falando, imagens e voz. Usa créditos da xAI.
 
 Veja o passo a passo de cada um nas próximas abas.
 """)
@@ -2541,12 +2554,12 @@ Cadastre **uma vez** o nome do negócio, o logo, as cores, o WhatsApp, o Instagr
 Todos os vídeos saem com o seu **logo e @ no canto** e uma **cena final de contato com QR code** que abre o seu WhatsApp.
 Clique em **👀 Ver a cena final** para conferir. Não custa nada.
 
-**📋 Modelos prontos por nicho** (aba no topo da página)
+**📋 Modelos prontos por nicho** (aba **🎬 Vídeos gratuitos**, no topo da página)
 12 nichos (restaurante, salão, imobiliária, construção, clínica, advocacia, loja, academia, cursos, eventos, pet shop e outros)
 com 3 tipos de vídeo: **Oferta**, **Conheça o meu negócio** e **Dica de especialista**.
 Preencha o nome do negócio e o produto e clique em **📋 Criar vídeo com este modelo**. É instantâneo e grátis.
 
-**📅 Meu mês de conteúdo** (aba no topo da página)
+**📅 Meu mês de conteúdo** (aba **⭐ Vídeos pagos**, no topo da página · usa créditos, cerca de 1 centavo)
 Descreva o seu negócio, escolha o objetivo e quantos vídeos por semana. A IA monta o **calendário do mês** com até 30 ideias,
 cada uma com data, tipo, título e a primeira frase. Clique em **🎬 Criar este vídeo** em cada ideia e marque **Feito**.
 Baixe o calendário em planilha para guardar.
@@ -2570,7 +2583,6 @@ Depois gere a narração na aba **🎙️ Voz da IA** para ouvir no novo idioma.
 **O que é uma "chave"?** É como uma senha que liga o app à sua conta na empresa de IA.
 Cada pessoa usa a sua. O uso fica na sua conta, e só você vê.
 """)
-            st.markdown(GUIA_GROQ)
             st.markdown(GUIA_XAI)
             st.markdown("""
 **Cuidados importantes**
@@ -2581,16 +2593,16 @@ Cada pessoa usa a sua. O uso fica na sua conta, e só você vê.
 """)
         with ts:
             st.markdown("""
-### 🎬 Criar vídeo simples, **grátis**
-Vídeo animado com fundos coloridos, títulos, emojis, personagem ou a sua foto, legendas e música.
-Ótimo para promoções, avisos, dicas e stories. **Precisa só da chave da Groq (grátis).**
+### 🎬 Criar vídeo **gratuito**
+Vídeo animado com fundos coloridos, títulos, emojis, personagem ou a sua foto, legendas, música e a sua marca.
+Ótimo para promoções, avisos, dicas e stories. **Não gasta créditos.**
 
-1. **Entre no app** com o seu nome e a **chave da Groq**.
-2. **No topo da página**, escreva o **Tema do vídeo** (ex.: *Promoção de pizza de sexta*).
-3. Em **Descreva o seu serviço ou produto**, conte o que você vende, o que faz, para quem, diferenciais, **preço** e **contato**.
-4. Escolha **Finalidade**, **Formato** (vertical para Reels/Stories), **Duração**, **Idioma** e **Estilo visual**.
-5. Clique em **✨ Gerar roteiro com IA** e espere alguns segundos.
-6. O roteiro aparece no estúdio, no passo **Roteiro**. Cada cena tem um **título** (texto grande) e a **fala**. Mude o que quiser.
+1. **Entre no app** com o seu nome e a sua chave.
+2. No topo da página, aba **🎬 Vídeos gratuitos**, escolha o **seu nicho** e o **tipo de vídeo** (Oferta, Conheça o meu negócio ou Dica).
+3. Preencha o **nome do negócio**, o **produto ou serviço** e, se quiser, a oferta, a cidade e o WhatsApp.
+4. Clique em **📋 Criar vídeo com este modelo**. O vídeo abre na hora no estúdio, logo abaixo.
+5. Quer escrever do seu jeito? No estúdio, passo **6 · Roteiro**, mude os textos, apague ou adicione cenas.
+6. Cada cena tem um **título** (texto grande na tela) e a **fala** (legenda e narração).
 7. Se quiser, ajuste nos passos do estúdio: **Estilo**, **Apresentador** (sua foto ou um personagem), **Voz** e **Música**.
    Aperte **▶** na prévia para assistir.
 8. Clique no botão laranja **🎬 Finalizar vídeo**, embaixo da prévia.
@@ -2602,20 +2614,19 @@ Vídeo animado com fundos coloridos, títulos, emojis, personagem ou a sua foto,
 """)
         with tp:
             st.markdown("""
-### ⭐ Criar vídeo **profissional** (IA paga, sem assinatura)
+### ⭐ Criar vídeo **pago** (IA profissional, sem assinatura)
 Cada cena ganha **vídeo de verdade feito por IA**: pessoas, produtos, lugares e câmera em movimento,
-ou **a sua foto falando**. Você paga só pelo vídeo que gerar, direto na sua conta da xAI,
-**a partir de poucos reais por vídeo**. **Precisa da chave da Groq + a chave da xAI** (veja a aba **As chaves**).
+ou **a sua foto falando**. Você paga só pelo que gerar, direto na sua conta da xAI,
+**a partir de poucos reais por vídeo**. Precisa de **créditos na xAI** (botão **💳 Comprar créditos**).
 
-**Parte 1: entrar com as duas chaves**
-1. Na tela de entrada, preencha o **nome**, a **chave da Groq** (*gsk_*) e a **chave da xAI** (*xai-*).
-   Já entrou sem a chave da xAI? No estúdio, passo **8 · Gerar**, use o quadro **🔑 Coloque a sua chave da xAI**:
-   botão **Obter minha chave na xAI**, campo para colar e botão **Salvar chave**.
+**Parte 1: entrar e colocar créditos**
+1. Entre com o seu nome e a sua **chave do Grok Imagine (xAI)**.
+   Sem créditos? Clique em **💳 Comprar créditos** (5 a 10 dólares já dão para vários vídeos).
 
-**Parte 2: fazer o roteiro (grátis)**
+**Parte 2: fazer o roteiro com IA**
 
-2. No **topo da página**, preencha o **Tema** e **Descreva o seu serviço ou produto**, escolha formato e duração.
-3. Clique em **✨ Gerar roteiro com IA** e confira as cenas no passo **Roteiro** do estúdio.
+2. No topo da página, aba **⭐ Vídeos pagos** → **✨ Roteiro com IA**: preencha o **Tema** e **Descreva o seu serviço ou produto**, escolha formato e duração.
+3. Clique em **✨ Gerar roteiro com IA** (menos de 1 centavo de dólar) e confira as cenas no passo **Roteiro** do estúdio.
 
 ⚡ **Atalho:** depois de fazer o roteiro, clique no botão **⭐ Criar vídeo profissional (IA)**, embaixo da prévia.
 Ele mostra o custo, pede a sua confirmação, gera as cenas com IA e já finaliza o vídeo sozinho.
@@ -2693,7 +2704,10 @@ no modelo 1.5). O painel só deixa escolher combinações que a xAI aceita, para
 """)
         with t6:
             st.markdown("""
-**"A Groq recusou essa chave"**: copie a chave de novo, inteira, sem espaços. Se não der certo, crie outra no site.
+**"A xAI recusou a sua chave"**: copie a chave de novo, inteira, sem espaços. Se não der certo, crie outra em console.x.ai → API Keys.
+
+**"Sua conta da xAI está sem créditos"**: a IA (roteiro, calendário, chat, clipes, imagens e voz) só funciona com créditos.
+Clique em **[💳 Comprar créditos na xAI](https://console.x.ai/team/default/billing)**. Os vídeos gratuitos continuam funcionando sem créditos.
 
 **O roteiro não mudou / o vídeo saiu com o roteiro antigo**: gere o roteiro no **topo da página**,
 confira as cenas novas no passo **Roteiro** e clique em **🎬 Finalizar vídeo** de novo.
@@ -2726,48 +2740,51 @@ def tela_entrada():
     with meio:
         with st.form("entrar"):
             nome = st.text_input("Seu nome", placeholder="Como você quer ser chamado")
-            chave = st.text_input(
-                "Sua chave da Groq",
-                type="password",
-                placeholder="gsk_...",
-                help="Crie grátis em https://console.groq.com/keys (veja o passo a passo logo abaixo).",
+            st.markdown(
+                f"Ainda não tem a chave? 👉 **[Clique aqui para pegar a sua chave na xAI]({XAI_CHAVES_URL})** "
+                "(abre em outra aba: clique em **Create API Key**, copie e cole aqui embaixo)."
             )
             xai = st.text_input(
-                "Chave da xAI (opcional)",
+                "Sua chave do Grok Imagine (xAI)",
                 type="password",
-                placeholder="xai-...",
-                help="Só para gerar clipes animados por IA (Grok Imagine). É paga por uso: https://console.x.ai (veja o passo a passo logo abaixo).",
+                placeholder="xai-... ou grok_...",
+                help="Crie em console.x.ai → API Keys (veja o passo a passo logo abaixo). Criar a chave é grátis.",
             )
             entrar = st.form_submit_button("Entrar no app", type="primary", use_container_width=True)
         b1, b2 = st.columns(2)
-        b1.link_button("🔑 Obter chave da Groq (grátis)", "https://console.groq.com/keys", use_container_width=True)
-        b2.link_button("🔑 Obter chave da xAI", "https://console.x.ai/team/default/api-keys", use_container_width=True)
-        st.caption("🔒 Suas chaves valem só nesta sessão. Elas não ficam salvas no servidor e ninguém mais vê. "
-                   "A chave da xAI também pode ser colocada depois, dentro do app, no passo 8 · Gerar.")
-        with st.expander("🔑 Primeira vez? Veja como conseguir as chaves (grátis)"):
-            st.markdown(GUIA_GROQ)
+        b1.link_button("🔑 Obter minha chave", XAI_CHAVES_URL, use_container_width=True)
+        b2.link_button("💳 Comprar créditos", XAI_CREDITOS_URL, use_container_width=True)
+        st.markdown(
+            "<div style='font-size:14px;line-height:1.5;margin-top:6px'>"
+            "🎬 <b>Grátis:</b> modelos prontos, roteiro escrito por você, sua marca, vídeo com fundos animados e música.<br>"
+            "✨ <b>Com créditos da xAI</b> (sem mensalidade, a partir de centavos): roteiro e calendário com IA, chat, "
+            "texto do post, tradução, clipes de vídeo, imagens e voz.</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption("🔒 Sua chave vale só nesta sessão. Ela não fica salva no servidor e ninguém mais vê.")
+        with st.expander("🔑 Primeira vez? Veja como conseguir a sua chave"):
             st.markdown(GUIA_XAI)
-            st.caption("Criar as chaves é grátis. A da Groq tem uso gratuito. A da xAI só cobra quando você gera clipes com IA, sem mensalidade.")
+            st.caption("Criar a conta e a chave é grátis. Os créditos são pré-pagos: você só paga pelo que usar, sem mensalidade.")
 
     if entrar:
-        nome, chave, xai = nome.strip(), chave.strip(), xai.strip()
+        nome, xai = nome.strip(), xai.strip()
         if not nome:
             st.error("Digite o seu nome.")
-        elif not chave.startswith("gsk_"):
-            st.error("Cole a sua chave da Groq. Ela começa com gsk_.")
-        elif xai and not xai.startswith("xai-"):
-            st.error("A chave da xAI começa com xai-. Deixe em branco se não tiver.")
+        elif not xai:
+            st.error("Cole a sua chave do Grok Imagine (xAI). Clique em 🔑 Obter minha chave se ainda não tiver.")
+        elif not xai_prefixo_ok(xai):
+            st.error("Essa não parece uma chave da xAI. Ela começa com xai- ou grok_. Copie a chave inteira.")
         else:
-            with st.spinner("Conferindo a sua chave…"):
-                erro = groq_check(chave)
+            with st.spinner("Conferindo a sua chave com a xAI…"):
+                erro = xai_check(xai)
             if erro:
                 st.error(erro)
             else:
-                st.session_state.update(evs_user=nome, evs_groq=chave, evs_xai=xai)
+                st.session_state.update(evs_user=nome, evs_xai=xai)
                 st.rerun()
 
 
-if not st.session_state.get("evs_user") or not st.session_state.get("evs_groq"):
+if not st.session_state.get("evs_user") or not st.session_state.get("evs_xai"):
     tela_entrada()
     st.stop()
 
@@ -3002,7 +3019,7 @@ Responda somente com JSON:
 def criar_roteiro_ia(topic, servico, purpose_name, duration, fmt_name, lang_name, visual_name, music=None):
     dados = groq_script(
         build_prompt(topic, purpose_name, duration, FORMATS[fmt_name], lang_name, servico, visual_name if VISUAIS.get(visual_name) else ""),
-        st.session_state["evs_groq"],
+        st.session_state["evs_xai"],
     )
     scenes = dados.get("scenes") if isinstance(dados, dict) else dados
     if not scenes:
@@ -3019,6 +3036,12 @@ def injetar(topic, scenes, post, purpose, style, servico, duration, fmt, lang, m
         "post": post or None, "music": music or "",
     }
     st.session_state["evs_post"] = post or None
+
+
+def mostrar_erro(e):
+    st.error(str(e))
+    if "crédito" in str(e):
+        st.link_button("💳 Comprar créditos na xAI", XAI_CREDITOS_URL)
 
 
 def avisar(msg):
@@ -3039,24 +3062,54 @@ def mostrar_post():
         st.caption("O mesmo texto também fica no estúdio, no passo 8 · Gerar, para você copiar depois de baixar o vídeo.")
 
 
-# ---------- topo: criar com IA · modelos prontos · meu mês ----------
+# ---------- topo: vídeos gratuitos · vídeos pagos ----------
+NOTA_PAGOS = "<div style='border:1px solid #ff5a36;background:#ff5a3622;border-radius:12px;padding:12px 16px;display:flex;gap:12px;align-items:flex-start;margin-bottom:10px'><span style='font-size:22px;line-height:1.2'>💸</span><div style='display:flex;flex-direction:column;gap:6px'><b style='font-size:16px'>Vídeos profissionais sem assinatura mensal.</b><span>Este app é uma ponte entre você e uma IA de vídeo profissional (Grok Imagine, da xAI). Em vez de pagar uma assinatura todo mês, você usa a sua própria chave e paga só pelo vídeo que gerar, direto na sua conta da xAI, a partir de poucos reais por vídeo.</span><span style='opacity:.75;font-size:13px'>O custo exato aparece antes de você gerar.</span></div></div>"
+
 ca, cb = st.columns([5, 1])
 ca.markdown(
     f"<h2 style='margin-bottom:0'>🎬 Olá, {html.escape(st.session_state['evs_user'])}!</h2>"
-    "<p style='opacity:.75;margin-top:4px'>Crie com a IA, use um modelo pronto do seu nicho ou planeje o mês inteiro. "
+    "<p style='opacity:.75;margin-top:4px'>Faça vídeos <b>gratuitos</b> com modelos prontos ou vídeos <b>pagos</b> com a IA profissional. "
     "Depois é só ajustar e clicar em <b>🎬 Finalizar vídeo</b>, embaixo da prévia.</p>",
     unsafe_allow_html=True,
 )
 if cb.button("Sair", use_container_width=True):
-    for k in ("evs_user", "evs_groq", "evs_xai", "evs_inject", "evs_chat", "evs_ponte_out", "evs_ponte_feito", "evs_ponte_ultimo", "evs_post", "evs_mes", "evs_msg"):
+    for k in ("evs_user", "evs_xai", "evs_inject", "evs_chat", "evs_ponte_out", "evs_ponte_feito", "evs_ponte_ultimo", "evs_post", "evs_mes", "evs_msg"):
         st.session_state.pop(k, None)
     st.rerun()
 
 tutorial(aberto=st.session_state.get("evs_tut_aberto", True))  # fica aberto na sessão; a pessoa fecha quando quiser
 
-aba_ia, aba_modelos, aba_mes = st.tabs(["✨ Criar com IA", "📋 Modelos prontos por nicho", "📅 Meu mês de conteúdo"])
+aba_gratis, aba_paga = st.tabs(["🎬 Vídeos gratuitos", "⭐ Vídeos pagos (IA profissional)"])
+with aba_gratis:
+    st.markdown(
+        "<div style='font-size:14.5px;line-height:1.55;margin:4px 0 8px'><b>Sem gastar nada.</b> Escolha um <b>modelo pronto do seu nicho</b> abaixo "
+        "(ou escreva o seu roteiro direto no estúdio, passo <b>6 · Roteiro</b>). O vídeo sai com fundos animados, a sua marca, "
+        "música e legendas. No fim, clique em <b>🎬 Finalizar vídeo</b>, embaixo da prévia.</div>",
+        unsafe_allow_html=True,
+    )
+aba_modelos = aba_gratis
+with aba_paga:
+    st.markdown(NOTA_PAGOS, unsafe_allow_html=True)
+    lb1, lb2, _ = st.columns([1, 1, 2])
+    lb1.link_button("💳 Comprar créditos na xAI", XAI_CREDITOS_URL, type="primary", use_container_width=True)
+    lb2.link_button("🔑 Pegar ou trocar minha chave", XAI_CHAVES_URL, use_container_width=True)
+    aba_ia, aba_mes, aba_pro = st.tabs(["✨ Roteiro com IA", "📅 Meu mês de conteúdo", "🎥 Clipes, imagens e voz"])
+with aba_pro:
+    st.markdown("""
+**Deixe o vídeo com cara de produção profissional.** Tudo é feito no estúdio, logo abaixo:
+
+- **Jeito mais rápido:** clique em **⭐ Criar vídeo profissional (IA)**, embaixo da prévia. O app mostra o custo, pede a sua confirmação, gera as cenas com IA e já finaliza o vídeo.
+- **Escolhendo cada detalhe:** no estúdio, passo **8 · Gerar**, seção **🤖 IA paga**, com 3 abas:
+  - **🎬 Vídeo:** cenas de vídeo criadas pela IA, **sua foto falando** (26 vozes), personagem fixo, animar as suas fotos, **início e fim** (antes e depois), editar e estender clipes.
+  - **🖼️ Imagens:** gerar, editar com uma frase e juntar imagens.
+  - **🎙️ Voz da IA:** narração natural em português que **entra no arquivo baixado**.
+
+**Quanto custa (aproximado):** vídeo Lite a partir de US$ 0,02 por segundo (30 s por menos de 1 dólar) · vídeo 1.5 de US$ 0,08 a 0,25 por segundo ·
+imagens de US$ 0,02 a 0,08 · voz menos de 1 centavo por vídeo. **Dica:** teste antes com **uma cena só**, modelo **Lite**, em **480p**.
+""")
 
 with aba_ia:
+    st.caption("A IA escreve o roteiro e o texto do post a partir do seu tema. Usa créditos da xAI: menos de 1 centavo de dólar por roteiro.")
     with st.form("roteiro"):
         topic = st.text_input("Tema do vídeo", placeholder="Ex.: Promoção de pizza de sexta, 2 por R$ 79")
         style_desc = st.text_area(
@@ -3082,10 +3135,10 @@ with aba_ia:
                     n = criar_roteiro_ia(topic.strip(), style_desc.strip(), purpose_name, duration, fmt_name, lang_name, visual_name)
                     st.session_state["evs_msg"] = f"✅ Roteiro pronto com {n} cenas. Ele já abriu no estúdio abaixo, no passo Roteiro."
                 except Exception as e:  # noqa: BLE001
-                    st.error(str(e))
+                    mostrar_erro(e)
 
 with aba_modelos:
-    st.caption("Escolha o seu nicho e o tipo de vídeo, preencha 3 campos e pronto. Não gasta IA: é instantâneo.")
+    st.markdown("**📋 Modelos prontos por nicho** · escolha o seu nicho e o tipo de vídeo, preencha 3 campos e pronto. Instantâneo e grátis.")
     with st.form("modelo"):
         m1, m2 = st.columns(2)
         nicho = m1.selectbox("Seu nicho", list(NICHOS), key="m_nicho")
@@ -3112,7 +3165,7 @@ with aba_modelos:
     st.caption("Dica: cadastre o seu logo, cores e WhatsApp em 🎨 Minha marca, no topo do estúdio. Todo vídeo sai com a sua identidade e uma cena final de contato com QR code.")
 
 with aba_mes:
-    st.caption("A IA monta o seu calendário de vídeos para o mês. Depois é só clicar em 🎬 Criar este vídeo em cada ideia.")
+    st.caption("A IA monta o seu calendário de vídeos para o mês. Depois é só clicar em 🎬 Criar este vídeo em cada ideia. Usa créditos da xAI: cerca de 1 centavo de dólar pelo mês inteiro.")
     with st.form("mes"):
         servico_mes = st.text_area("Descreva o seu negócio", value=st.session_state.get("evs_servico", ""), height=90, key="mes_servico",
                                    placeholder="O que você vende, para quem, diferenciais e cidade. Ex.: HE Projeto Civil, projetos e reformas residenciais em Campinas.")
@@ -3131,7 +3184,7 @@ with aba_mes:
             mes_txt = f"{datas[0].strftime('%d/%m/%Y')} a {datas[-1].strftime('%d/%m/%Y')}"
             with st.spinner(f"Montando {n_ideias} ideias de vídeo…"):
                 try:
-                    dados = groq_json(prompt_mes(servico_mes.strip(), nicho_mes, objetivo, n_ideias, mes_txt, "Português"), st.session_state["evs_groq"])
+                    dados = groq_json(prompt_mes(servico_mes.strip(), nicho_mes, objetivo, n_ideias, mes_txt, "Português"), st.session_state["evs_xai"])
                     ideias = [i for i in (dados.get("ideias") or []) if isinstance(i, dict)][:n_ideias]
                     if not ideias:
                         raise RuntimeError("A IA não devolveu ideias. Tente de novo.")
@@ -3143,7 +3196,7 @@ with aba_mes:
                         del st.session_state[k]
                     st.success(f"Pronto! {len(ideias)} ideias no seu calendário.")
                 except Exception as e:  # noqa: BLE001
-                    st.error(str(e))
+                    mostrar_erro(e)
     mes = st.session_state.get("evs_mes")
     if mes:
         n_feitos = sum(1 for i in range(len(mes["ideias"])) if st.session_state.get(f"mes_feito_{i}"))
@@ -3174,7 +3227,7 @@ with aba_mes:
                             st.session_state["evs_msg"] = f"✅ Roteiro da ideia de {d.strftime('%d/%m')} pronto! Ele abriu no estúdio abaixo, no passo Roteiro."
                             st.rerun()
                         except Exception as e:  # noqa: BLE001
-                            st.error(str(e))
+                            mostrar_erro(e)
                 k2.checkbox("Feito", key=f"mes_feito_{idx}")
         linhas = ["data;dia;tipo;titulo;gancho;descricao"] + [
             ";".join([i["data"], DIAS_SEMANA[datetime.fromisoformat(i["data"]).weekday()]] + [str(i.get(c, "")).replace(";", ",").replace("\n", " ") for c in ("tipo", "titulo", "gancho", "descricao")])
@@ -3188,7 +3241,7 @@ mostrar_post()
 
 # ---------- estúdio ----------
 inject = dict(st.session_state.get("evs_inject") or {})
-inject["engine"] = "Groq"
+inject["engine"] = "Grok"
 inject["userName"] = st.session_state["evs_user"]
 ponte_ok = montar_ponte()
 if ponte_ok:
