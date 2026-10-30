@@ -1,6 +1,7 @@
-streamlit
+ streamlit
    requests
    pillow
    numpy
    imageio-ffmpeg
    gTTS
+   edge-tts
