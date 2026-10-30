@@ -24,6 +24,9 @@ Opcional (Secrets) para cobrar pelos vídeos profissionais:
     PIX_CHAVE = "sua-chave-pix"
     LINK_PAGAMENTO = "https://seu-link-de-pagamento"
     PRECO_VIDEO_PRO = "9,90"
+
+Opcional para imagens grátis mais estáveis (chave grátis em enter.pollinations.ai):
+    POLLINATIONS_KEY = "sua-chave-pollinations"
 """
 
 import base64
@@ -45,21 +48,62 @@ import requests
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+def _instalar(pacote):
+    """Instala um pacote na hora, caso o requirements.txt não tenha sido lido."""
+    import sys
+    for cmd in ([sys.executable, "-m", "pip", "install", "-q", pacote],
+                [sys.executable, "-m", "pip", "install", "-q", "--user", pacote],
+                ["uv", "pip", "install", "-q", "--python", sys.executable, pacote]):
+        try:
+            if subprocess.run(cmd, capture_output=True, timeout=240).returncode == 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 try:
     import imageio_ffmpeg
-    FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 except Exception:  # pragma: no cover
     imageio_ffmpeg = None
+    if _instalar("imageio-ffmpeg"):
+        try:
+            import importlib
+            importlib.invalidate_caches()
+            import imageio_ffmpeg
+        except Exception:
+            imageio_ffmpeg = None
+try:
+    FFMPEG = imageio_ffmpeg.get_ffmpeg_exe() if imageio_ffmpeg else None
+except Exception:  # pragma: no cover
     FFMPEG = None
 
 try:
     from gtts import gTTS
 except Exception:  # pragma: no cover
     gTTS = None
+    if _instalar("gTTS"):
+        try:
+            import importlib
+            importlib.invalidate_caches()
+            from gtts import gTTS
+        except Exception:
+            gTTS = None
 
 # ============================================================================
-# Configuração
+# >>>>>>>>>>  COLE SUAS CHAVES AQUI (dono do app)  <<<<<<<<<<
 # ============================================================================
+# Chave GRÁTIS da Pexels para vídeos reais de fundo: crie em https://www.pexels.com/api/
+# e cole entre as aspas. Exemplo: PEXELS_CHAVE = "abc123..."
+PEXELS_CHAVE = ""
+# Chave grátis opcional da Pollinations (imagens de IA mais estáveis): enter.pollinations.ai
+POLLINATIONS_CHAVE = ""
+# Cobrança dos vídeos profissionais (deixe vazio para não cobrar)
+PIX = ""
+LINK_DE_PAGAMENTO = ""
+PRECO = "9,90"
+# ============================================================================
+
 NOME_APP = "Appvideo"
 GROQ_BASE = "https://api.groq.com/openai/v1"
 LINK_GROQ = "https://console.groq.com/keys"
@@ -87,9 +131,10 @@ def config(nome, padrao=""):
     return os.environ.get(nome, padrao)
 
 
-PIX_CHAVE = config("PIX_CHAVE")
-LINK_PAGAMENTO = config("LINK_PAGAMENTO")
-PRECO_VIDEO_PRO = config("PRECO_VIDEO_PRO", "9,90")
+PIX_CHAVE = PIX or config("PIX_CHAVE")
+LINK_PAGAMENTO = LINK_DE_PAGAMENTO or config("LINK_PAGAMENTO")
+PRECO_VIDEO_PRO = config("PRECO_VIDEO_PRO", PRECO or "9,90")
+PEXELS_KEY = PEXELS_CHAVE.strip() or config("PEXELS_KEY")
 COBRANCA_ATIVA = bool(PIX_CHAVE or LINK_PAGAMENTO)
 
 # ============================================================================
@@ -283,6 +328,7 @@ TEMAS = {
     "Clean claro": dict(c1=(226, 232, 240), c2=(248, 250, 252), acc=(15, 23, 42),
                         txt=(15, 23, 42), caixa=(255, 255, 255), layout="caixa"),
 }
+FONTE_VIDEO = "Vídeos reais de fundo (grátis)"
 ESTILOS_IMG = {
     "Foto publicitária realista": "professional advertising photography, photorealistic, sharp focus, studio lighting, high detail",
     "Cinematográfico": "cinematic film still, dramatic lighting, shallow depth of field, rich colors",
@@ -407,19 +453,152 @@ def arte_fundo(W, H, tema, semente):
     return base.resize((W, H), Image.BICUBIC)
 
 
-def imagem_gratis_ia(prompt, W, H, semente):
-    """Imagem grátis via Pollinations (sem chave). Retorna PIL ou None."""
-    url = (f"https://image.pollinations.ai/prompt/{quote(prompt)}"
-           f"?width={W}&height={H}&nologo=true&seed={semente}&model=flux")
-    for _ in range(2):
+POLLINATIONS_KEY = POLLINATIONS_CHAVE.strip() or config("POLLINATIONS_KEY")
+
+
+# ---------------- vídeos reais de fundo (Pexels, grátis) ----------------
+LINK_PEXELS = "https://www.pexels.com/api/"
+
+
+def chave_pexels():
+    """Usa a chave do usuário; se ele não colou, usa a do dono do app (se houver)."""
+    try:
+        return st.session_state.get("pexels_key") or PEXELS_KEY
+    except Exception:
+        return PEXELS_KEY
+
+
+def validar_pexels(chave):
+    try:
+        r = requests.get("https://api.pexels.com/videos/search",
+                         params={"query": "nature", "per_page": 1},
+                         headers={"Authorization": chave}, timeout=20)
+    except requests.RequestException:
+        return True, ""  # sem conexão para testar agora: aceita e tenta na hora do vídeo
+    if r.status_code == 200:
+        return True, ""
+    if r.status_code in (401, 403):
+        return False, (f"A Pexels não reconheceu essa chave. Copie a chave inteira em "
+                       f"[pexels.com/api]({LINK_PEXELS}) ou deixe o campo vazio para entrar sem ela.")
+    if r.status_code == 429:
+        return True, ""
+    return True, ""
+
+
+def buscar_video_pexels(busca, W, H, usados):
+    """Procura e baixa um vídeo grátis da Pexels. Retorna caminho do .mp4 ou None."""
+    chave = chave_pexels()
+    if not chave or not busca:
+        return None
+    orient = "portrait" if H > W * 1.1 else "landscape" if W > H * 1.1 else "square"
+    for consulta, orientacao in ((busca, orient), (busca, None),
+                                 (" ".join(busca.split()[:2]), None)):
         try:
-            r = requests.get(url, timeout=90)
+            params = {"query": consulta, "per_page": 12, "size": "medium"}
+            if orientacao:
+                params["orientation"] = orientacao
+            r = requests.get("https://api.pexels.com/videos/search", params=params,
+                             headers={"Authorization": chave}, timeout=20)
+            if r.status_code != 200:
+                continue
+            videos = [v for v in r.json().get("videos", [])
+                      if v.get("id") not in usados and v.get("duration", 0) >= 3]
+            for v in videos:
+                arquivos = [f for f in v.get("video_files", [])
+                            if f.get("link") and (f.get("file_type") or "").endswith("mp4")
+                            and f.get("width") and f.get("height")]
+                if not arquivos:
+                    continue
+                alvo = min(W, H)
+                arquivos.sort(key=lambda f: (min(f["width"], f["height"]) < alvo * 0.9,
+                                             abs(min(f["width"], f["height"]) - alvo)))
+                escolhido = arquivos[0]
+                destino = os.path.join(tempfile.mkdtemp(prefix="appvideo_pexels_"), "fundo.mp4")
+                with requests.get(escolhido["link"], stream=True, timeout=60) as rv:
+                    if rv.status_code != 200:
+                        continue
+                    total = 0
+                    with open(destino, "wb") as f:
+                        for parte in rv.iter_content(1 << 16):
+                            total += len(parte)
+                            if total > 60 * 1024 * 1024:
+                                break
+                            f.write(parte)
+                usados.add(v.get("id"))
+                return destino
+        except Exception:
+            continue
+    return None
+
+
+class FonteVideo:
+    """Lê os quadros de um vídeo já recortado no tamanho do anúncio, sob demanda."""
+
+    def __init__(self, caminho, W, H):
+        self.W, self.H = W, H
+        self.tam = W * H * 3
+        self.proc = subprocess.Popen(
+            [FFMPEG, "-loglevel", "error", "-stream_loop", "-1", "-i", caminho,
+             "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}",
+             "-an", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.idx = -1
+        self.atual = np.zeros((H, W, 3), np.float32)
+
+    def quadro(self, k):
+        while self.idx < k and self.proc:
+            dados = self.proc.stdout.read(self.tam)
+            if len(dados) < self.tam:
+                self.fechar()
+                break
+            self.atual = np.frombuffer(dados, np.uint8).reshape(self.H, self.W, 3).astype(np.float32)
+            self.idx += 1
+        return self.atual.copy()
+
+    def fechar(self):
+        if self.proc:
+            try:
+                self.proc.stdout.close()
+                self.proc.kill()
+                self.proc.wait(timeout=5)
+            except Exception:
+                pass
+            self.proc = None
+
+
+def imagem_gratis_ia(prompt, W, H, semente):
+    """Imagem grátis via Pollinations. Tenta vários endereços. Retorna PIL ou None."""
+    p = quote(prompt[:400])
+    params = f"width={W}&height={H}&nologo=true&seed={semente}&model=flux"
+    if POLLINATIONS_KEY:
+        params += f"&key={POLLINATIONS_KEY}"
+    urls = [
+        f"https://gen.pollinations.ai/image/{p}?{params}",
+        f"https://pollinations.ai/p/{p}?{params}",
+        f"https://image.pollinations.ai/prompt/{p}?{params}",
+    ]
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=75, headers={"User-Agent": "Appvideo/1.0"})
             if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
                 return Image.open(io.BytesIO(r.content)).convert("RGB")
         except Exception:
             pass
-        time.sleep(2)
     return None
+
+
+def imagem_xai_pil(prompt, W, H):
+    """Imagem pela Grok (chave xAI conectada) — custa centavos. Retorna PIL ou None."""
+    try:
+        prop = "9:16" if H > W * 1.2 else "16:9" if W > H * 1.2 else "1:1"
+        ref = gerar_imagem_xai(prompt, prop)
+        if ref.startswith("data:"):
+            dados = base64.b64decode(ref.split(",", 1)[1])
+        else:
+            dados = baixar_bytes(ref)
+        return Image.open(io.BytesIO(dados)).convert("RGB") if dados else None
+    except Exception:
+        return None
 
 
 # ---------------- camadas de texto ----------------
@@ -626,7 +805,10 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
     progresso(pct, texto)
     """
     if not imageio_ffmpeg:
-        raise RuntimeError("Falta o pacote imageio-ffmpeg. Adicione-o ao requirements.txt.")
+        raise RuntimeError(
+            "o servidor não instalou o imageio-ffmpeg. No GitHub, confira se o arquivo "
+            "requirements.txt está na MESMA pasta do app.py, com esse nome exato, e depois "
+            "clique em 'Reboot app' no Streamlit Cloud.")
     W, H = FORMATOS_GRATIS[opc["formato"]]
     tema = TEMAS[opc["tema"]]
     S = 1.15
@@ -655,15 +837,31 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         voz = narracoes[i]
         duracoes.append(max(minimo, (len(voz) / SR + 0.9) if voz is not None else 0))
 
-    # 3) imagens
-    progresso(12, "Preparando as imagens…")
+    # 3) vídeos de fundo / imagens
     imagens = [None] * len(cenas)
+    videos = [None] * len(cenas)
     fotos = list(fotos or [])
-    for i in range(len(cenas)):
-        if fotos and (opc["fonte_img"] == "Só minhas fotos" or i < len(fotos)):
-            imagens[i] = fotos[i % len(fotos)]
-    if opc["fonte_img"] == "Imagens geradas por IA (grátis)":
-        faltam = [i for i in range(len(cenas)) if imagens[i] is None]
+    modo_video = opc["fonte_img"] == FONTE_VIDEO
+    if modo_video:
+        if not chave_pexels():
+            st.info("Para vídeos reais de fundo, conecte sua chave Pexels grátis. "
+                    "Usei imagens de IA no lugar.")
+        else:
+            usados = set()
+            for i, cena in enumerate(cenas):
+                progresso(10 + int(14 * i / len(cenas)),
+                          f"Buscando vídeo de fundo {i + 1} de {len(cenas)}…")
+                busca = (cena.get("busca_video") or cena.get("imagem") or opc["produto"])
+                videos[i] = buscar_video_pexels(" ".join(str(busca).split()[:5]), W, H, usados)
+            if not any(videos):
+                st.info("Não encontrei vídeos de fundo agora; usei imagens no lugar.")
+    else:
+        for i in range(len(cenas)):
+            if fotos and (opc["fonte_img"] == "Só minhas fotos" or i < len(fotos)):
+                imagens[i] = fotos[i % len(fotos)]
+    progresso(25, "Preparando as imagens…")
+    if opc["fonte_img"] in ("Imagens geradas por IA (grátis)", FONTE_VIDEO):
+        faltam = [i for i in range(len(cenas)) if imagens[i] is None and videos[i] is None]
         estilo = ESTILOS_IMG[opc["estilo_img"]]
 
         def buscar(i):
@@ -672,11 +870,24 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
 
         if faltam:
             progresso(15, f"Criando {len(faltam)} imagens com IA grátis (pode levar 1 minuto)…")
-            with ThreadPoolExecutor(max_workers=4) as ex:
+            with ThreadPoolExecutor(max_workers=3) as ex:
                 for i, img in ex.map(buscar, faltam):
                     imagens[i] = img
-            if any(imagens[i] is None for i in faltam):
-                st.info("Algumas imagens de IA não vieram a tempo; usei fundos do tema no lugar.")
+            ainda = [i for i in faltam if imagens[i] is None]
+            if ainda and opc.get("usar_xai") and st.session_state.get("xai_key"):
+                progresso(24, "Gerando as imagens que faltaram com a Grok…")
+                for i in ainda:
+                    p = f"{cenas[i].get('imagem') or opc['produto']}, {estilo}, no text"
+                    imagens[i] = imagem_xai_pil(p, W, H)
+                ainda = [i for i in faltam if imagens[i] is None]
+            if ainda and fotos:
+                for j, i in enumerate(ainda):
+                    imagens[i] = fotos[j % len(fotos)]
+                ainda = []
+            if ainda:
+                st.info(f"O gerador de imagens grátis não respondeu para {len(ainda)} de "
+                        f"{len(faltam)} cenas; usei fundos do tema no lugar. Dica: envie suas "
+                        "fotos do produto ou tente de novo em alguns minutos.")
 
     # 4) cenas prontas
     progresso(30, "Montando as cenas…")
@@ -692,28 +903,38 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
     blocos = []
     inicio = 0.0
     for i, cena in enumerate(cenas):
-        img = imagens[i] if imagens[i] is not None else arte_fundo(W, H, tema, i * 31 + 5)
-        base = ImageOps.fit(img.convert("RGB"), (int(W * S), int(H * S)), Image.LANCZOS)
-        blocos.append(dict(base=base, dur=duracoes[i], inicio=inicio, zoom_in=(i % 2 == 0),
+        if videos[i]:
+            base = None
+        else:
+            img = imagens[i] if imagens[i] is not None else arte_fundo(W, H, tema, i * 31 + 5)
+            base = ImageOps.fit(img.convert("RGB"), (int(W * S), int(H * S)), Image.LANCZOS)
+        blocos.append(dict(base=base, video=videos[i], fonte=None,
+                           dur=duracoes[i], inicio=inicio, zoom_in=(i % 2 == 0),
                            pan=((-1) ** i * 0.6, (-1) ** (i // 2) * 0.4),
                            texto=para_arrays(camada_texto_cena(W, H, tema, cena.get("texto_tela", ""))),
                            sombra=True, marca=True))
         inicio += duracoes[i] - T
     fundo, cam_cta = fundo_cta(W, H, tema, opc["produto"], opc.get("cta", ""), opc.get("contato", ""))
-    blocos.append(dict(base=fundo, dur=duracoes[-1], inicio=inicio, zoom_in=True, pan=(0, 0),
+    blocos.append(dict(base=fundo, video=None, fonte=None,
+                       dur=duracoes[-1], inicio=inicio, zoom_in=True, pan=(0, 0),
                        texto=para_arrays(cam_cta), sombra=False, marca=False))
     total = inicio + duracoes[-1]
 
     def quadro_cena(b, tl):
         p = max(0.0, min(1.0, tl / b["dur"]))
-        BW, BH = b["base"].size
-        z = 1 + (S - 1) * suave(p) if b["zoom_in"] else S - (S - 1) * suave(p)
-        ww, wh = BW / z, BH / z
-        mx, my = (BW - ww) / 2, (BH - wh) / 2
-        cx = BW / 2 + b["pan"][0] * mx * (p * 2 - 1)
-        cy = BH / 2 + b["pan"][1] * my * (p * 2 - 1)
-        caixa = (cx - ww / 2, cy - wh / 2, cx + ww / 2, cy + wh / 2)
-        arr = np.asarray(b["base"].resize((W, H), Image.BILINEAR, box=caixa), dtype=np.float32)
+        if b["video"]:
+            if b["fonte"] is None:
+                b["fonte"] = FonteVideo(b["video"], W, H)
+            arr = b["fonte"].quadro(max(0, int(tl * FPS)))
+        else:
+            BW, BH = b["base"].size
+            z = 1 + (S - 1) * suave(p) if b["zoom_in"] else S - (S - 1) * suave(p)
+            ww, wh = BW / z, BH / z
+            mx, my = (BW - ww) / 2, (BH - wh) / 2
+            cx = BW / 2 + b["pan"][0] * mx * (p * 2 - 1)
+            cy = BH / 2 + b["pan"][1] * my * (p * 2 - 1)
+            caixa = (cx - ww / 2, cy - wh / 2, cx + ww / 2, cy + wh / 2)
+            arr = np.asarray(b["base"].resize((W, H), Image.BILINEAR, box=caixa), dtype=np.float32)
         if b["sombra"]:
             arr = arr * (1 - sombra)
         if b["marca"] and marca_arr:
@@ -772,10 +993,16 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
                 mistura = suave((t - prox["inicio"]) / T)
                 quadro = quadro * (1 - mistura) + quadro_cena(prox, t - prox["inicio"]) * mistura
             gerador.send(np.ascontiguousarray(quadro.clip(0, 255).astype(np.uint8)))
+            for b in blocos:
+                if b["fonte"] is not None and t >= b["inicio"] + b["dur"]:
+                    b["fonte"].fechar()
             if q % 12 == 0:
                 progresso(40 + int(58 * q / n_quadros), f"Renderizando o vídeo… {int(100 * q / n_quadros)}%")
     finally:
         gerador.close()
+        for b in blocos:
+            if b["fonte"] is not None:
+                b["fonte"].fechar()
 
     with open(caminho_mp4, "rb") as f:
         dados = f.read()
@@ -799,7 +1026,8 @@ def gerar_roteiro(produto, descricao, publico, tom, n, cta, contato):
         f"vídeo curto com exatamente {n} cenas. Responda APENAS com JSON neste formato: "
         '{"cenas":[{"texto_tela":"frase de impacto com no máximo 7 palavras",'
         '"narracao":"1 ou 2 frases curtas para o locutor, em português do Brasil, no máximo 22 palavras",'
-        '"imagem":"descrição em inglês de uma foto publicitária para esta cena, sem texto escrito"}],'
+        '"imagem":"descrição em inglês de uma foto publicitária para esta cena, sem texto escrito",'
+        '"busca_video":"2 a 4 palavras em inglês para buscar um vídeo de banco de imagens desta cena, ex.: burger grill closeup"}],'
         '"cta":"chamada final curta, no máximo 6 palavras"}. '
         "A primeira cena é um gancho que prende a atenção, as do meio mostram benefícios e a "
         "última reforça a oferta. Não invente preços nem promoções que não foram informados."
@@ -813,7 +1041,8 @@ def gerar_roteiro(produto, descricao, publico, tom, n, cta, contato):
     for c in dados.get("cenas", [])[:n]:
         cenas.append({"texto_tela": str(c.get("texto_tela", ""))[:80],
                       "narracao": str(c.get("narracao", ""))[:220],
-                      "imagem": str(c.get("imagem", ""))[:300]})
+                      "imagem": str(c.get("imagem", ""))[:300],
+                      "busca_video": str(c.get("busca_video", ""))[:60]})
     if not cenas:
         raise RuntimeError("A IA não devolveu o roteiro. Tente de novo.")
     return cenas, (cta or str(dados.get("cta", "")))[:60]
@@ -822,7 +1051,8 @@ def gerar_roteiro(produto, descricao, publico, tom, n, cta, contato):
 # ============================================================================
 # Interface
 # ============================================================================
-st.set_page_config(page_title=NOME_APP, page_icon="🎬", layout="wide")
+st.set_page_config(page_title=NOME_APP, page_icon="🎬", layout="wide",
+                   initial_sidebar_state="collapsed")
 st.markdown(
     """
     <style>
@@ -832,6 +1062,14 @@ st.markdown(
            color: #fff; margin-bottom: 1rem;}
     .hero h1 {margin: 0; font-size: 2rem; color:#fff;}
     .hero p {margin: .3rem 0 0; opacity: .85;}
+    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"] {display: none !important;}
+    @media (max-width: 640px) {
+      .block-container {padding: 1rem .8rem 2rem;}
+      .hero {padding: 1rem 1.1rem;} .hero h1 {font-size: 1.5rem;}
+      [data-baseweb="tab-list"] {overflow-x: auto; flex-wrap: nowrap;}
+      [data-baseweb="tab"] {white-space: nowrap; font-size: .85rem;}
+    }
     .nota {border-left: 4px solid #7c3aed; background: rgba(124,58,237,.08);
            padding: .8rem 1rem; border-radius: 8px; margin: .6rem 0 1rem;}
     </style>
@@ -842,7 +1080,7 @@ st.markdown(
 for k, v in {"logado": False, "nome": "", "groq_key": "", "xai_key": "",
              "modelos_groq": MODELOS_GROQ_PREFERIDOS, "modelo_chat": MODELOS_GROQ_PREFERIDOS[0],
              "chat": [], "galeria": [], "cenas": [], "cta_gerado": "",
-             "ultimo_gratis": None, "ultimo_pro": None}.items():
+             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": ""}.items():
     st.session_state.setdefault(k, v)
 
 
@@ -858,25 +1096,53 @@ def tela_login():
         st.subheader("Entrar")
         with st.form("login"):
             nome = st.text_input("Seu nome", placeholder="Ex.: Maria Silva")
-            chave = st.text_input("Cole sua chave Groq (grátis)", type="password",
-                                  placeholder="gsk_...")
+            chave = st.text_input("1️⃣ Chave Groq (grátis) — para o roteiro e o assistente",
+                                  type="password", placeholder="gsk_...")
+            chave_px = st.text_input("2️⃣ Chave Pexels (grátis) — para os vídeos reais de fundo",
+                                     type="password", placeholder="cole aqui sua chave Pexels")
             entrar = st.form_submit_button("Entrar no app", type="primary")
-        st.markdown(f"🔑 **Não tem chave?** [Clique aqui para criar sua chave Groq grátis]({LINK_GROQ})")
-        st.caption("Entre com Google ou e-mail → **Create API Key** → dê um nome → copie a chave "
-                   "(começa com gsk_). Não precisa de cartão.")
+        st.caption("As duas chaves são grátis e não pedem cartão. Se você ainda não tem, "
+                   "siga o passo a passo abaixo — leva uns 3 minutos.")
+        with st.expander("🔑 Passo a passo: pegar a chave Groq e colar no campo 1️⃣", expanded=True):
+            st.markdown(
+                f"1. Toque aqui: **[abrir console.groq.com/keys]({LINK_GROQ})** (abre em outra aba).\n"
+                "2. Entre com sua conta **Google** ou com seu **e-mail**.\n"
+                "3. Toque no botão **Create API Key**.\n"
+                "4. Em *Display name*, escreva **Appvideo** e toque em **Submit**.\n"
+                "5. Vai aparecer uma chave comprida que começa com **gsk_**. Toque em **Copy** "
+                "(ela só aparece uma vez — se fechar, crie outra).\n"
+                "6. Volte para esta aba e **cole no campo 1️⃣ Chave Groq** acima."
+            )
+        with st.expander("🎥 Passo a passo: pegar a chave Pexels e colar no campo 2️⃣"):
+            st.markdown(
+                f"1. Toque aqui: **[abrir pexels.com/api]({LINK_PEXELS})** (abre em outra aba).\n"
+                "2. Toque em **Join** e crie sua conta grátis (ou entre com Google).\n"
+                "3. Volte em **pexels.com/api** e toque em **Your API Key** (ou *Get Started*).\n"
+                "4. Preencha o formulário: em *project name*, escreva **Appvideo**; em *description*, "
+                "escreva **criar vídeos de anúncio**. Aceite os termos e envie.\n"
+                "5. A sua chave aparece na tela. Toque nela e **copie o texto inteiro**.\n"
+                "6. Volte para esta aba e **cole no campo 2️⃣ Chave Pexels** acima.\n\n"
+                "É opcional: sem ela o app funciona, mas o fundo dos vídeos usa imagens em vez de "
+                "vídeos reais. Você também pode colar depois, dentro da aba **Criar vídeo grátis**."
+            )
+        st.caption("📱 No celular: depois de copiar, toque e segure no campo e escolha **Colar**.")
         if entrar:
-            chave = limpar_chave(chave)
+            chave, chave_px = limpar_chave(chave), limpar_chave(chave_px)
             if not nome.strip() or not chave:
-                st.error("Preencha seu nome e sua chave.")
+                st.error("Preencha seu nome e sua chave Groq.")
                 return
-            with st.spinner("Verificando sua chave…"):
+            with st.spinner("Verificando suas chaves…"):
                 ok, msg, modelos = validar_groq(chave)
-            if ok:
-                st.session_state.update(logado=True, nome=nome.strip(), groq_key=chave,
-                                        modelos_groq=modelos, modelo_chat=modelos[0])
-                st.rerun()
-            else:
+                ok_px, msg_px = validar_pexels(chave_px) if chave_px else (True, "")
+            if not ok:
                 st.error(msg)
+            elif not ok_px:
+                st.error(msg_px)
+            else:
+                st.session_state.update(logado=True, nome=nome.strip(), groq_key=chave,
+                                        pexels_key=chave_px, modelos_groq=modelos,
+                                        modelo_chat=modelos[0])
+                st.rerun()
     with col2:
         st.subheader("Como funciona")
         st.markdown(
@@ -914,10 +1180,31 @@ def aba_gratis():
     with c2:
         formato = st.selectbox("Formato", list(FORMATOS_GRATIS), key="g_formato")
         tema = st.selectbox("Tema visual", list(TEMAS), key="g_tema")
-        fonte_img = st.radio("Imagens", ["Imagens geradas por IA (grátis)", "Só minhas fotos",
-                                         "Fundos animados do tema"], key="g_fonte")
+        opcoes_fundo = ["Imagens geradas por IA (grátis)", "Só minhas fotos", "Fundos animados do tema"]
+        if chave_pexels():
+            opcoes_fundo.insert(0, FONTE_VIDEO)
+        else:
+            with st.expander("🎥 Quer vídeos reais no fundo? Conecte sua chave Pexels grátis"):
+                nova_px = st.text_input("Chave Pexels", type="password", key="g_px_nova")
+                st.markdown(f"[Criar chave Pexels grátis]({LINK_PEXELS})")
+                if st.button("Conectar Pexels", key="g_px_btn"):
+                    nova_px = limpar_chave(nova_px)
+                    ok_px, msg_px = validar_pexels(nova_px) if nova_px else (False, "Cole a chave.")
+                    if ok_px:
+                        st.session_state.pexels_key = nova_px
+                        st.rerun()
+                    else:
+                        st.error(msg_px)
+        fonte_img = st.radio("Fundo das cenas", opcoes_fundo, key="g_fonte")
+        if fonte_img == FONTE_VIDEO:
+            st.caption("Vídeos reais e grátis do banco Pexels, escolhidos para cada cena. "
+                       "Vídeos fornecidos por [Pexels](https://www.pexels.com).")
         estilo_img = st.selectbox("Estilo das imagens de IA", list(ESTILOS_IMG), key="g_estilo",
-                                  disabled=fonte_img != "Imagens geradas por IA (grátis)")
+                                  disabled=fonte_img not in ("Imagens geradas por IA (grátis)", FONTE_VIDEO))
+        usar_xai = False
+        if st.session_state.xai_key and fonte_img in ("Imagens geradas por IA (grátis)", FONTE_VIDEO):
+            usar_xai = st.checkbox("Se o gerador grátis falhar, usar a Grok (custa centavos na xAI)",
+                                   value=True, key="g_usar_xai")
         fotos_up = st.file_uploader("Suas fotos (produto, loja, logo…) — usadas primeiro",
                                     type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True,
                                     key="g_fotos")
@@ -948,6 +1235,7 @@ def aba_gratis():
                 "texto_tela": st.column_config.TextColumn("Texto na tela", width="medium"),
                 "narracao": st.column_config.TextColumn("Narração", width="large"),
                 "imagem": st.column_config.TextColumn("Imagem (descrição para a IA)", width="medium"),
+                "busca_video": st.column_config.TextColumn("Vídeo de fundo (busca em inglês)", width="small"),
             },
         )
         cenas_finais = [dict(c) for c in editado if any(str(v or "").strip() for v in dict(c).values())]
@@ -973,7 +1261,7 @@ def aba_gratis():
             fotos = [Image.open(f).convert("RGB") for f in (fotos_up or [])]
             opc = dict(produto=produto.strip(), cta=cta_final, contato=contato, formato=formato,
                        tema=tema, estilo_img=estilo_img, fonte_img=fonte_img, musica=musica,
-                       narracao=narracao, dur_min=dur_min)
+                       narracao=narracao, dur_min=dur_min, usar_xai=usar_xai)
             dados = criar_video_gratis(cenas_finais, opc, fotos,
                                        lambda p, t: barra.progress(min(100, p), text=t))
             st.session_state.ultimo_gratis = {"bytes": dados, "titulo": produto.strip()}
@@ -1025,9 +1313,18 @@ def conectar_xai():
     with st.form("form_xai"):
         chave = st.text_input("Cole sua chave xAI", type="password", placeholder="xai-...")
         ok_btn = st.form_submit_button("Conectar chave xAI", type="primary")
-    st.markdown(f"🔑 [Clique aqui para criar sua chave xAI]({LINK_XAI}) — não precisa de "
-                "assinatura Premium. Crie a conta, adicione créditos em **Billing**, depois "
-                "**API Keys → Create API Key** e copie o valor (começa com xai-).")
+    with st.expander("🔑 Passo a passo: pegar a chave xAI e colar aqui", expanded=True):
+        st.markdown(
+            f"1. Toque aqui: **[abrir console.x.ai]({LINK_XAI})** (abre em outra aba).\n"
+            "2. Entre com sua conta **X**, **Google** ou **e-mail**. Não precisa de Premium.\n"
+            "3. Se pedir, crie um **Team** (só escreva um nome, ex.: Appvideo).\n"
+            "4. No menu, abra **Billing** e adicione créditos com cartão (ex.: US$ 5). "
+            "Sem saldo, a chave não gera vídeo.\n"
+            "5. No menu, abra **API Keys** e toque em **Create API Key**.\n"
+            "6. Dê o nome **Appvideo**, deixe **todas as permissões liberadas** e confirme.\n"
+            "7. Copie a chave que começa com **xai-** (ela só aparece uma vez).\n"
+            "8. Volte para esta aba, **cole no campo acima** e toque em **Conectar chave xAI**."
+        )
     if ok_btn:
         chave = limpar_chave(chave)
         with st.spinner("Verificando…"):
@@ -1200,7 +1497,7 @@ def aba_assistente():
         "roteiro, cria imagens grátis, narração em português, música e animações; (2) Criar "
         "vídeos pagos — a pessoa conecta a chave xAI (console.x.ai, paga por uso, sem precisar "
         "de Premium) e usa a Grok Imagine com avatar da própria foto falando, até 15s em 720p. "
-        "Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
+        "Para vídeos reais no fundo, a pessoa cola a chave grátis da Pexels (pexels.com/api) na entrada ou na aba grátis. Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
     for m in st.session_state.chat:
         with st.chat_message(m["role"], avatar="🧑" if m["role"] == "user" else "🤖"):
             st.markdown(m["content"])
@@ -1229,11 +1526,21 @@ def aba_tutorial():
             "4. Copie a chave na hora (começa com **gsk_**). Ela aparece só uma vez.\n"
             "5. Cole na tela de entrada do Appvideo junto com seu nome."
         )
+    with st.expander("1b. Como criar sua chave Pexels grátis (vídeos reais de fundo)"):
+        st.markdown(
+            f"1. Acesse **[pexels.com/api]({LINK_PEXELS})** e crie uma conta grátis.\n"
+            "2. Clique em **Your API Key** (ou *Get Started*).\n"
+            "3. Preencha o nome do projeto (ex.: Appvideo) e o motivo (ex.: criar vídeos de anúncio).\n"
+            "4. Copie a chave que aparece na tela.\n"
+            "5. Cole no campo **Chave Pexels** da tela de entrada — ou depois, dentro da aba "
+            "**Criar vídeo grátis**.\n\n"
+            "Com ela, cada cena do seu anúncio ganha um vídeo real em movimento no fundo."
+        )
     with st.expander("2. Criando um vídeo grátis"):
         st.markdown(
             "1. Abra **Criar vídeo grátis** e escreva o produto e os detalhes.\n"
-            "2. Escolha o **formato** (9:16 para Reels/TikTok), o **tema visual** e de onde vêm "
-            "as **imagens**: IA grátis, suas fotos ou fundos animados.\n"
+            "2. Escolha o **formato** (9:16 para Reels/TikTok), o **tema visual** e o **fundo das "
+            "cenas**: vídeos reais (com chave Pexels), imagens de IA, suas fotos ou fundos animados.\n"
             "3. Envie fotos do seu produto ou loja, se tiver — elas entram primeiro.\n"
             "4. Clique em **Gerar roteiro com IA** e ajuste os textos na tabela.\n"
             "5. Escolha a música e se quer narração em português.\n"
@@ -1272,17 +1579,13 @@ def aba_tutorial():
 
 
 def app():
-    with st.sidebar:
-        st.markdown(f"### 👋 Olá, {st.session_state.nome}!")
-        st.caption("✅ Groq conectada (grátis)")
-        st.caption("✅ xAI conectada" if st.session_state.xai_key else "⚪ xAI não conectada")
-        st.markdown(f"🎞️ Vídeos nesta sessão: **{len(st.session_state.galeria)}**")
-        st.markdown("---")
-        if st.button("Sair"):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
-            st.rerun()
     hero("Vídeos de publicidade grátis e ponte para vídeos ultra profissionais com a Grok Imagine.")
+    c1, c2 = st.columns([5, 1], vertical_alignment="center")
+    c1.markdown(f"👋 Olá, **{st.session_state.nome}**!")
+    if c2.button("Sair", key="sair"):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
     abas = st.tabs(["🎁 Criar vídeo grátis", "💎 Criar vídeos pagos", "📁 Meus vídeos",
                     "🤖 Assistente IA", "📚 Tutorial"])
     with abas[0]:
