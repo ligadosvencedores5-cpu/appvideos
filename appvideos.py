@@ -883,10 +883,17 @@ def fundo_cta(W, H, tema, produto, cta, contato, foto=None):
 
 
 # ---------------- áudio ----------------
-def decodificar_audio(dados, acelerar=1.0):
+def decodificar_audio(dados, acelerar=1.0, tom=0.0):
+    """Converte qualquer áudio em amostras. 'tom' muda a altura da voz em semitons."""
     if not FFMPEG:
         return None
-    filtro = ["-filter:a", f"atempo={acelerar}"] if abs(acelerar - 1) > 0.01 else []
+    filtros = []
+    if abs(tom) > 0.01:
+        f = 2 ** (tom / 12)
+        filtros.append(f"asetrate={int(24000 * f)},aresample=24000,atempo={1 / f:.4f}")
+    if abs(acelerar - 1) > 0.01:
+        filtros.append(f"atempo={acelerar}")
+    filtro = ["-filter:a", ",".join(filtros)] if filtros else []
     proc = subprocess.run([FFMPEG, "-loglevel", "error", "-i", "pipe:0", *filtro,
                            "-f", "s16le", "-ac", "1", "-ar", str(SR), "pipe:1"],
                           input=dados, capture_output=True, timeout=120)
@@ -903,36 +910,65 @@ VOZES = {
     "🎙️ Minha própria voz (gravar ou enviar áudio)": "MINHA_VOZ",
 }
 VELOCIDADES = {"Normal": "+0%", "Rápida": "+10%", "Bem rápida": "+20%"}
-ESTADO_VOZ = {"reserva": False}  # avisa se precisou usar a voz reserva
+# Se as vozes da Microsoft não responderem, cada uma ganha uma versão reserva diferente
+# (voz do Google com altura ajustada), para as opções nunca ficarem iguais.
+TOM_RESERVA = {"pt-BR-FranciscaNeural": 0.0, "pt-BR-AntonioNeural": -5.5,
+               "pt-BR-ThalitaMultilingualNeural": 2.0}
+ESTADO_VOZ = {"reserva": False, "erro": "", "fora_ate": 0.0, "ultimo_erro": ""}
 
 
-def _voz_google(texto, acelerar):
+def _voz_google(texto, acelerar, tom=0.0):
     if not gTTS:
         return None
     buf = io.BytesIO()
     gTTS(texto, lang="pt", tld="com.br").write_to_fp(buf)
-    return decodificar_audio(buf.getvalue(), acelerar=acelerar)
+    return decodificar_audio(buf.getvalue(), acelerar=acelerar, tom=tom)
+
+
+def _voz_microsoft(texto, voz, velocidade):
+    """Devolve (audio, erro)."""
+    if edge_tts is None:
+        return None, "a biblioteca edge-tts não está instalada no servidor"
+    if time.time() < ESTADO_VOZ["fora_ate"]:  # falhou há pouco: não espera de novo
+        return None, ESTADO_VOZ["ultimo_erro"]
+
+    def baixar():
+        com = edge_tts.Communicate(texto, voz, rate=velocidade,
+                                   connect_timeout=6, receive_timeout=20)
+        return b"".join(p["data"] for p in com.stream_sync() if p.get("type") == "audio")
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        dados = ex.submit(baixar).result(timeout=30)  # nunca deixa o app travado
+    except Exception as e:
+        nome = "tempo esgotado" if type(e).__name__ == "TimeoutError" else type(e).__name__
+        erro = f"{nome}: {str(e)[:160]}".rstrip(": ")
+        ESTADO_VOZ["fora_ate"], ESTADO_VOZ["ultimo_erro"] = time.time() + 300, erro
+        return None, erro
+    finally:
+        ex.shutdown(wait=False)
+    if not dados:
+        return None, "o serviço de vozes não devolveu áudio"
+    audio = decodificar_audio(dados)
+    if audio is None or len(audio) < SR // 4:
+        return None, "o áudio recebido veio vazio"
+    return audio, ""
 
 
 def narrar(texto, voz=None, velocidade="+0%"):
-    """Grava a fala. Usa a voz escolhida; se ela falhar, usa a voz do Google."""
+    """Grava a fala com a voz escolhida. Se a da Microsoft falhar, usa uma reserva
+    diferente para cada voz e registra o motivo em ESTADO_VOZ."""
     if not texto or not texto.strip():
         return None
     if voz == "MINHA_VOZ":
         voz = None
-    if voz and edge_tts is not None:
-        try:
-            dados = b"".join(parte["data"] for parte in
-                             edge_tts.Communicate(texto, voz, rate=velocidade).stream_sync()
-                             if parte.get("type") == "audio")
-            audio = decodificar_audio(dados) if dados else None
-            if audio is not None and len(audio) > SR // 4:
-                return audio
-        except Exception:
-            pass
+    if voz:
+        audio, erro = _voz_microsoft(texto, voz, velocidade)
+        if audio is not None:
+            return audio
         ESTADO_VOZ["reserva"] = True
-    extra = {"+0%": 1.0, "+10%": 1.12, "+20%": 1.25}.get(velocidade, 1.12)
-    return _voz_google(texto, 1.12 if not voz else extra)
+        ESTADO_VOZ["erro"] = erro
+    acelerar = {"+0%": 1.1, "+10%": 1.22, "+20%": 1.35}.get(velocidade, 1.1)
+    return _voz_google(texto, acelerar, TOM_RESERVA.get(voz, 0.0))
 
 
 def preparar_voz_propria(dados):
@@ -958,20 +994,22 @@ def preparar_voz_propria(dados):
     return audio.astype(np.float32)
 
 
-@st.cache_data(show_spinner=False, max_entries=20)
+@st.cache_data(ttl=600, show_spinner=False, max_entries=20)
 def amostra_voz(voz, velocidade):
     """Áudio curto para a pessoa ouvir a voz antes de criar o vídeo (WAV em bytes)."""
+    ESTADO_VOZ["reserva"], ESTADO_VOZ["erro"] = False, ""
     audio = narrar("Olá! Esta é a voz do seu anúncio. Fale com a gente e aproveite!",
                    voz, velocidade)
+    motor = ESTADO_VOZ["erro"] if ESTADO_VOZ["reserva"] else ""
     if audio is None:
-        return None
+        return None, motor
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(SR)
         w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
-    return buf.getvalue()
+    return buf.getvalue(), motor
 
 
 def nota(midi):
@@ -1099,7 +1137,8 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
                 st.warning(f"Não foi possível gerar a narração agora ({e}). Seguindo sem voz.")
                 narracoes = [None] * (len(cenas) + 1)
             if voz and ESTADO_VOZ["reserva"]:
-                st.info("A voz escolhida não respondeu agora; usei a voz do Google no lugar.")
+                st.info("As vozes da Microsoft não responderam agora, então usei a versão "
+                        f"reserva desta voz. (Motivo: {ESTADO_VOZ['erro'] or 'desconhecido'})")
 
     # 2) durações
     duracoes = []
@@ -1567,11 +1606,16 @@ def aba_gratis():
                     if st.button("Apagar minha gravação", key="g_apagar_audio"):
                         st.session_state.audio_proprio = None
                         st.rerun()
-            elif st.button("🔊 Ouvir esta voz", key="g_ouvir"):
+            if VOZES[voz_nome] != "MINHA_VOZ" and st.button("🔊 Ouvir esta voz", key="g_ouvir"):
                 with st.spinner("Preparando a amostra…"):
-                    amostra = amostra_voz(VOZES[voz_nome], VELOCIDADES[velocidade])
+                    amostra, motor = amostra_voz(VOZES[voz_nome], VELOCIDADES[velocidade])
                 if amostra:
                     st.audio(amostra, format="audio/wav")
+                    if motor:
+                        st.warning("⚠️ As vozes da Microsoft não responderam, então esta é a "
+                                   f"versão reserva. Motivo técnico: {motor}")
+                    elif VOZES[voz_nome]:
+                        st.caption("✅ Voz neural da Microsoft.")
                 else:
                     st.warning("Não consegui gerar a amostra agora. Tente de novo em instantes.")
 
