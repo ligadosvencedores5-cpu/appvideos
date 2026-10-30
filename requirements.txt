@@ -1,2 +1,6 @@
 streamlit
-groq
+   requests
+   pillow
+   numpy
+   imageio-ffmpeg
+   gTTS
