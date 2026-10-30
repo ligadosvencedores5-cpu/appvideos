@@ -942,11 +942,11 @@ function keyPanel(extra = "") {
     <b style="font-size:15px">🔑 Coloque a sua chave da xAI para usar a IA paga</b>
     <ol style="margin:0;padding-left:20px;font-size:13.5px;color:var(--muted);display:flex;flex-direction:column;gap:4px">
       <li>Clique em <b>Obter minha chave</b>. Abre o site da xAI (em inglês). Entre na sua conta e clique em <b>API Keys</b> (chaves de API) no menu da esquerda.</li>
-      <li>Clique em <b>Create API Key</b> (criar chave), dê um nome e confirme. Copie a chave: ela começa com <b>xai-</b>.</li>
+      <li>Clique em <b>Create API Key</b> (criar chave), dê um nome e confirme. Copie a chave: ela começa com <b>xai-</b> ou <b>grok_</b> (depende da sua conta; as duas servem).</li>
       <li>Volte aqui, cole a chave no campo abaixo e clique em <b>Salvar chave</b>.</li>
     </ol>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="${XAI_CHAVES}" target="_blank" rel="noopener">🔑 Obter minha chave na xAI</a><a class="btn" href="${XAI_CREDITOS}" target="_blank" rel="noopener">💳 Comprar créditos</a></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="xaiKeyIn" type="password" autocomplete="off" placeholder="Cole aqui a sua chave da xAI (começa com xai-)" style="flex:1 1 240px;width:auto" aria-label="Chave da xAI"><button class="btn primary" id="xaiKeySave">Salvar chave</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="xaiKeyIn" type="password" autocomplete="off" placeholder="Cole aqui a sua chave da xAI (xai-... ou grok_...)" style="flex:1 1 240px;width:auto" aria-label="Chave da xAI"><button class="btn primary" id="xaiKeySave">Salvar chave</button></div>
     <div id="xaiKeyMsg" role="status" aria-live="polite" style="font-size:14px;font-weight:600"></div>
     <span class="mon-note">${ENV.ponte ? "A chave vai só para o servidor e vale enquanto você estiver no app. Ela não fica salva no navegador." : "A chave fica salva só neste navegador."} Sem créditos, a chave não gera nada.</span>${extra}
   </div>`;
@@ -956,7 +956,7 @@ function keyMsg(txt, ok) { const el = document.getElementById("xaiKeyMsg"); if (
 async function saveXaiKey() {
   const inp = document.getElementById("xaiKeyIn"); const k = (inp?.value || "").trim();
   if (!k) { keyMsg("Cole a sua chave no campo acima antes de salvar."); toast("Cole a sua chave no campo antes de salvar."); inp?.focus(); return; }
-  if (!/^xai-/.test(k) || k.length < 20) { keyMsg("⚠️ Essa não parece uma chave da xAI. Ela começa com xai-. Copie a chave inteira."); toast("Cole a chave da xAI inteira. Ela começa com xai-."); inp?.focus(); return; }
+  if (!/^(xai-|grok_)/.test(k) || k.length < 20) { keyMsg("⚠️ Essa não parece uma chave da xAI. Ela começa com xai- ou grok_. Copie a chave inteira."); toast("Cole a chave da xAI inteira. Ela começa com xai- ou grok_."); inp?.focus(); return; }
   if (ENV.ponte) {
     if (!BR.ok) { bridgePing(); keyMsg("⏳ A conexão com o servidor ainda está iniciando. Espere alguns segundos e clique de novo."); toast("Espere alguns segundos e tente de novo."); return; }
     const btn = document.getElementById("xaiKeySave"); if (btn) { btn.disabled = true; btn.textContent = "Conferindo com a xAI…"; }
@@ -1704,7 +1704,7 @@ function openSettings() {
     <label class="f" for="gm">Modelo<input id="gm" type="text" value="${esc(settings.groqModel)}"></label>
     <span class="mon-note">Crie a chave em console.groq.com → API Keys. Modelos atuais: openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b.</span>
     <h3 style="margin:14px 0 0;font-family:var(--display)">xAI · clipes animados (Grok Imagine)</h3>
-    <label class="f" for="xk">Chave da xAI (começa com xai-)<input id="xk" type="password" autocomplete="off" value="${esc(settings.xaiKey)}" placeholder="xai-..."></label>
+    <label class="f" for="xk">Chave da xAI (começa com xai- ou grok_)<input id="xk" type="password" autocomplete="off" value="${esc(settings.xaiKey)}" placeholder="xai-... ou grok_..."></label>
     <span class="mon-note">Crie a chave em console.x.ai. O modelo, a resolução e o custo você escolhe no passo Gerar.</span>
     <div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary" type="submit">Salvar</button><button class="btn ghost" type="button" id="clrKeys">Apagar chaves</button></div>
     <p class="mon-note">As chaves ficam salvas só neste navegador, neste computador. Nunca compartilhe suas chaves.</p>
@@ -2118,7 +2118,7 @@ Responda somente com JSON neste formato:
 
 MSG_CHAVE_RECUSADA = (
     "A xAI recusou a sua chave (ela não é uma chave de API válida, foi apagada ou foi copiada pela metade). "
-    "Clique em **Sair**, pegue uma chave nova em console.x.ai → **API Keys** → **Create API key** "
+    "Clique em **Sair**, pegue uma chave nova no site da xAI → **API Keys** → **Create API key** "
     "e entre de novo com ela, copiada inteira."
 )
 
@@ -2191,14 +2191,14 @@ CONHECIMENTO = """
 SOBRE O APP "Estúdio de Vídeos":
 - Cria vídeos animados para redes sociais (Reels, Stories, TikTok, YouTube, WhatsApp, anúncios).
 - É uma ponte entre a pessoa e IAs profissionais: cada um usa a própria chave, sem assinatura mensal.
-- Uma chave só: a chave do Grok Imagine (xAI), que começa com xai-. É obrigatória para entrar. Ela liga toda a IA: roteiros, calendário, chat de dúvidas, texto do post, tradução, clipes, imagens e voz. Criar a chave é grátis; a IA usa créditos pré-pagos da xAI (sem mensalidade).
+- Uma chave só: a chave do Grok Imagine (xAI), que começa com xai- ou grok_ (depende da conta da pessoa na xAI; as duas servem). É obrigatória para entrar. Ela liga toda a IA: roteiros, calendário, chat de dúvidas, texto do post, tradução, clipes, imagens e voz. Criar a chave é grátis; a IA usa créditos pré-pagos da xAI (sem mensalidade).
 - O topo do app tem duas abas: "🎬 Vídeos gratuitos" (modelos prontos por nicho, roteiro escrito pela pessoa, fundos animados, marca, música; não gasta créditos) e "⭐ Vídeos pagos (IA profissional)" (nota "Vídeos profissionais sem assinatura mensal", botão de comprar créditos e as sub-abas "✨ Roteiro com IA", "📅 Meu mês de conteúdo" e "🎥 Clipes, imagens e voz").
 - Custos de texto: roteiro com IA menos de 1 centavo de dólar; calendário do mês cerca de 1 centavo; cada mensagem do chat frações de centavo.
 - Sem créditos: os vídeos gratuitos funcionam; a IA mostra o aviso "Sua conta da xAI está sem créditos" com o botão de comprar.
 - As chaves valem só na sessão; não ficam salvas no servidor. Ao clicar em Sair ou fechar, precisa colar de novo.
 
 COMO CRIAR A CHAVE DA xAI (site em inglês): console.x.ai -> Sign up/Sign in (criar conta/entrar com X, Google ou e-mail; se pedir Create team, criar com qualquer nome) -> comprar créditos no menu Billing do site https://console.x.ai/ (ou Settings -> Team -> Billing) -> API spend management -> Purchase credits (cartão de crédito, entra na hora; 5 a 10 dólares dão vários vídeos; sem mensalidade; Auto top-up é recarga automática opcional). No app também há o botão "💳 Comprar créditos na xAI" na seção IA paga. -> Back (voltar) -> no menu principal da esquerda, API Keys -> Create API Key -> Name: appvideos -> Create/Save -> Copy (a chave começa com xai- e aparece uma vez). Criar a chave é grátis; só cobra ao gerar.
-NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe). A chave certa é criada em console.x.ai -> API Keys e começa com xai-. Chaves que começam com grok_ ou outro formato NÃO servem: a xAI recusa. Se a pessoa tiver uma assim, deve criar uma nova em API Keys -> Create API key. O app confere a chave direto na xAI ao entrar ou ao salvar no passo 8; se a xAI recusar, aparece um aviso.
+NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe). A chave certa é criada em console.x.ai -> API Keys e começa com xai- (painel antigo, console.x.ai) ou grok_ (painel novo, grok.com/dashboard). Quem decide o formato é a xAI, conforme a equipe da pessoa; as duas servem. Cada equipe tem chaves e créditos separados: a chave gasta os créditos da equipe onde foi criada. O app confere a chave direto na xAI ao entrar ou ao salvar no passo 8; se a xAI recusar, aparece um aviso.
 Tradução dos menus da xAI: Usage = uso/gastos, Models = modelos, Team members = membros, Security = segurança, Audit Log = registro de atividades, Domains = domínios, Observability = monitoramento.
 
 DOIS CAMINHOS: (A) VÍDEO GRATUITO = aba "🎬 Vídeos gratuitos": modelo pronto por nicho (ou roteiro escrito à mão no passo 6), fundos animados do app, sem gastar créditos. (B) VÍDEO PAGO = aba "⭐ Vídeos pagos": gerar roteiro com IA, depois passo 8 Gerar > seção IA paga > escolher modo, modelo (Lite barato / 1.5 melhor), resolução (comece 480p), conferir custo, Gerar clipes de todas as cenas (ou só uma para testar), esperar Pronto, depois Finalizar vídeo e Baixar.
@@ -2378,7 +2378,7 @@ MAX_CLIPE = 80 * 1024 * 1024
 
 
 def xai_prefixo_ok(k):
-    return k.startswith("xai-") and 20 <= len(k) <= 300
+    return k.startswith(("xai-", "grok_")) and 20 <= len(k) <= 300
 
 
 def xai_check(key):
@@ -2390,7 +2390,7 @@ def xai_check(key):
     err = j.get("error") if isinstance(j, dict) else None
     msg = (err.get("message", "") if isinstance(err, dict) else str(err or (j.get("message", "") if isinstance(j, dict) else ""))).lower()
     if status in (401, 403) or (status == 400 and ("api key" in msg or "api-key" in msg)):
-        return ("A xAI recusou essa chave. Ela precisa ser uma chave de API criada em console.x.ai → API Keys → "
+        return ("A xAI recusou essa chave. Ela precisa ser uma chave de API criada no site da xAI → API Keys → "
                 "Create API key. Confira se copiou a chave inteira e se ela não foi apagada.")
     return None
 
@@ -2442,7 +2442,7 @@ def atender_lote(lote):
             continue
         if r.get("method") == "KEY":  # a pessoa colou a chave dentro do estúdio: guarda só no servidor
             nova = str((r.get("body") or {}).get("key", "")).strip()
-            erro = None if xai_prefixo_ok(nova) else "Essa chave não parece da xAI. Ela começa com xai-."
+            erro = None if xai_prefixo_ok(nova) else "Essa chave não parece da xAI. Ela começa com xai- ou grok_."
             erro = erro or xai_check(nova)
             if not erro:
                 st.session_state["evs_xai"] = nova
@@ -2520,12 +2520,13 @@ O site também é em inglês. Ao lado de cada botão está o que ele significa.
    Se preferir pelo menu: no menu principal da esquerda, clique em **API Keys**.
 9. Clique em **Create API Key** (criar chave de API). Em **Name** (nome), escreva `appvideos`.
    Deixe as permissões como estão e clique em **Create** / **Save** (criar / salvar).
-10. A chave aparece começando com **xai-**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
+10. A chave aparece começando com **xai-** ou **grok_** (depende da sua conta; as duas servem). Clique em **Copy** (copiar). Ela só aparece **uma vez**.
 11. Cole a chave no campo **Sua chave do Grok Imagine (xAI)**, na tela de entrada deste app, e clique em **Entrar no app**.
     Para trocar a chave depois: no estúdio, passo **8 · Gerar**, botão **Trocar chave**.
 
 **Atenção, para não confundir:**
 - **Management Keys** (chaves de gerenciamento), no menu de configurações, **não servem** para este app. Elas servem para administrar a equipe.
+- Se você tiver **mais de uma equipe** (o nome aparece no topo do menu da esquerda), cada uma tem **chaves e créditos separados**. Use a chave da equipe onde estão os créditos.
 - Crie a chave em **console.x.ai** → **API Keys**. O app confere a chave direto na xAI quando você coloca: se ela não servir, aparece um aviso na hora.
 - Outros itens do menu: **Usage** (uso / quanto já gastou), **Models** (modelos), **Team members** (membros da equipe), **Security** (segurança).
 """
@@ -2540,7 +2541,7 @@ O site da xAI é em inglês. Ao lado de cada botão está o que ele significa. *
 3. Se aparecer **Create team** (criar equipe), escreva qualquer nome (por exemplo, o nome do seu negócio) e confirme.
 4. No menu da esquerda, clique em **API Keys** (chaves de API).
 5. Clique em **Create API Key** (criar chave de API). Em **Name** (nome), escreva `appvideos` e clique em **Create** / **Save** (criar / salvar).
-6. A chave aparece começando com **xai-**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
+6. A chave aparece começando com **xai-** ou **grok_** (depende da sua conta; as duas servem). Clique em **Copy** (copiar). Ela só aparece **uma vez**.
 7. Volte aqui, cole a chave no campo **Sua chave do Grok Imagine (xAI)** e clique em **Entrar no app**.
 
 ⚠️ **Management Keys** (chaves de gerenciamento) **não servem**. Use a chave de **API Keys**.
@@ -2772,7 +2773,7 @@ def tela_entrada():
             xai = st.text_input(
                 "Sua chave do Grok Imagine (xAI)",
                 type="password",
-                placeholder="xai-...",
+                placeholder="xai-... ou grok_...",
                 help="Crie em console.x.ai → API Keys (veja o passo a passo logo abaixo). Criar a conta e a chave é grátis.",
             )
             entrar = st.form_submit_button("Entrar no app", type="primary", use_container_width=True)
@@ -2787,11 +2788,8 @@ def tela_entrada():
             st.error("Digite o seu nome.")
         elif not xai:
             st.error("Cole a sua chave do Grok Imagine (xAI). Clique em 🔑 Obter minha chave se ainda não tiver.")
-        elif xai.startswith("grok_"):
-            st.error("Chaves que começam com grok_ não servem aqui. No site da xAI, vá em API Keys → Create API key "
-                     "e copie a chave nova, que começa com xai-.")
         elif not xai_prefixo_ok(xai):
-            st.error("Essa não parece uma chave da xAI. Ela começa com xai-. Copie a chave inteira.")
+            st.error("Essa não parece uma chave da xAI. Ela começa com xai- ou grok_. Copie a chave inteira.")
         else:
             with st.spinner("Conferindo a sua chave com a xAI…"):
                 erro = xai_check(xai)
