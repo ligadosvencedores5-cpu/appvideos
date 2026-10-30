@@ -468,11 +468,23 @@ def chave_pexels():
         return PEXELS_KEY
 
 
+PEXELS_VIDEOS = ["https://api.pexels.com/v1/videos/search",  # endereço novo
+                 "https://api.pexels.com/videos/search"]     # antigo (reserva)
+
+
+def pexels_videos_get(params, chave):
+    """Busca vídeos no endereço novo da Pexels; se falhar, tenta o antigo."""
+    r = None
+    for url in PEXELS_VIDEOS:
+        r = requests.get(url, params=params, headers={"Authorization": chave}, timeout=20)
+        if r.status_code in (200, 401, 403, 429):
+            return r
+    return r
+
+
 def validar_pexels(chave):
     try:
-        r = requests.get("https://api.pexels.com/videos/search",
-                         params={"query": "nature", "per_page": 1},
-                         headers={"Authorization": chave}, timeout=20)
+        r = pexels_videos_get({"query": "nature", "per_page": 1}, chave)
     except requests.RequestException:
         return True, ""  # sem conexão para testar agora: aceita e tenta na hora do vídeo
     if r.status_code == 200:
@@ -497,8 +509,7 @@ def buscar_video_pexels(busca, W, H, usados):
             params = {"query": consulta, "per_page": 12, "size": "medium"}
             if orientacao:
                 params["orientation"] = orientacao
-            r = requests.get("https://api.pexels.com/videos/search", params=params,
-                             headers={"Authorization": chave}, timeout=20)
+            r = pexels_videos_get(params, chave)
             if r.status_code != 200:
                 continue
             videos = [v for v in r.json().get("videos", [])
