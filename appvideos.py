@@ -63,6 +63,7 @@ header.top .wrap{display:flex;align-items:center;gap:12px;padding-block:12px}
 .brand small{font-family:var(--body);font-weight:500;font-size:12px;color:var(--muted);letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:9px 14px;font-weight:600;font-size:14px;transition:background .15s,border-color .15s;white-space:nowrap}
 .btn:hover{background:var(--panel-2);border-color:#4a4262}
+a.btn{text-decoration:none;color:var(--fg)}
 .btn.primary{background:var(--rec);border-color:var(--rec);color:#1a0b06}
 .btn.primary:hover{background:#ff7352}
 .btn.ghost{background:transparent}
@@ -838,6 +839,7 @@ const XAI_MODELS = {
   "grok-imagine-video": { name: "Clássico", tag: "editar e estender", desc: "Permite editar um clipe com IA e estender a duração. Até 720p.", price: { "480p": 0.05, "720p": 0.07 } }
 };
 const XAI_IMG_PRICE = 0.02;
+const XAI_CREDITOS = "https://console.x.ai/team/default/billing"; // abre a página de créditos da equipe de quem estiver logado
 const XAI_MODES = {
   texto: { ico: "✍️", name: "Texto → vídeo", desc: "A IA cria cada cena a partir da descrição da cena (personagens, lugar, câmera)." },
   avatar: { ico: "🗣️", name: "Minha foto falando", desc: "Sua foto vira um apresentador que fala a narração, com boca sincronizada. Usa o modelo 1.5." },
@@ -887,7 +889,7 @@ function bridgeCall(method, path, body) {
 function xaiError(status, j, body) {
   const usaImagem = body && (body.image || body.reference_images);
   if (status === 401 || status === 403) return "A xAI recusou a chave. Clique em Sair e entre de novo com a chave da xAI correta.";
-  if (status === 402) return "Sem créditos na conta da xAI. Adicione créditos em console.x.ai (Billing).";
+  if (status === 402) return "Sem créditos na conta da xAI. Use o botão 💳 Comprar créditos na xAI.";
   if (status === 429) return "Muitos pedidos seguidos na xAI. Espere um minuto e tente de novo.";
   let m = j?.error?.message || j?.error || j?.message || ("Erro " + status);
   if (typeof m !== "string") m = JSON.stringify(m);
@@ -929,7 +931,8 @@ function clipBody(x) {
   const body = { model: ai.model, duration: clipSeconds(x), aspect_ratio: P.format, resolution: ai.res, generate_audio: !!ai.clipAudio };
   if (ai.mode === "avatar") {
     body.image = { url: P.presenter.photo };
-    body.prompt = `The person in the image talks directly to the camera with natural facial expressions and subtle head movement, saying in ${langName()}: "${x.s.text}". Accurate lip sync, clear voice. Keep the person's appearance. No text on screen.`;
+    const fala = { "pt-BR": "Brazilian Portuguese, with a natural Brazilian accent", "en-US": "American English", "es-ES": "Spanish" }[P.voice.lang] || "Brazilian Portuguese";
+    body.prompt = `The person in the image talks directly to the camera with natural facial expressions and subtle head movement, speaking in ${fala}, saying exactly: "${x.s.text}". Accurate lip sync, clear and friendly voice. Keep the person's appearance and the background. No text on screen.`;
   } else if (ai.mode === "personagem") {
     body.reference_images = [{ url: P.presenter.photo }];
     body.prompt = `<IMAGE_1> is the main character. ${scene}. Style: ${st}. No text, no captions on screen.`;
@@ -1040,6 +1043,7 @@ function openProConfirm() {
     Modo: <b>${esc(XAI_MODES[ai.mode].name)}</b>${ai.mode !== "foto_ia" ? ` · modelo <b>${esc(XAI_MODELS[ai.model].name)}</b> · ${ai.res}` : ""}.<br>
     ${miss.length ? `Vai gerar <b>${miss.length} ${miss.length > 1 ? "cenas" : "cena"}</b> por cerca de <b>US$ ${proCost().toFixed(2)}</b>, cobrados na sua conta da xAI.` : "Todas as cenas já têm IA. Vou só finalizar o vídeo, sem custo."}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary sm" id="proYes">Confirmar e criar</button><button class="btn sm" id="proOpts">Mudar opções</button><button class="btn ghost sm" id="proNo">Cancelar</button></div>
+    <div class="mon-note" style="margin-top:8px">Sem créditos? <a href="${XAI_CREDITOS}" target="_blank" rel="noopener" style="color:var(--lilac)">💳 Comprar créditos na xAI</a></div>
   </div></div>`;
 }
 async function runPro() {
@@ -1196,7 +1200,7 @@ const VIEWS = [
       </div>` +
       `<div class="gen-card" style="margin-top:16px">
         <h3>🤖 IA paga: clipes e imagens (Grok Imagine · xAI)</h3>
-        <div style="border:1px solid var(--rec);background:var(--rec-soft);border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start"><span style="font-size:20px;line-height:1.2">💸</span><div style="display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">Vídeos profissionais sem assinatura mensal.</b><span style="color:var(--fg)">Este app é uma ponte entre você e uma IA de vídeo profissional (Grok Imagine, da xAI). Em vez de pagar uma assinatura todo mês, você usa a sua própria chave e paga só pelo vídeo que gerar, direto na sua conta da xAI, a partir de poucos reais por vídeo.</span><span class="mon-note">O custo exato aparece logo abaixo, antes de você gerar.</span></div></div>
+        <div style="border:1px solid var(--rec);background:var(--rec-soft);border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start"><span style="font-size:20px;line-height:1.2">💸</span><div style="display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">Vídeos profissionais sem assinatura mensal.</b><span style="color:var(--fg)">Este app é uma ponte entre você e uma IA de vídeo profissional (Grok Imagine, da xAI). Em vez de pagar uma assinatura todo mês, você usa a sua própria chave e paga só pelo vídeo que gerar, direto na sua conta da xAI, a partir de poucos reais por vídeo.</span><span class="mon-note">O custo exato aparece logo abaixo, antes de você gerar.</span><a class="btn sm" href="${XAI_CREDITOS}" target="_blank" rel="noopener" style="align-self:flex-start;margin-top:4px">💳 Comprar créditos na xAI</a></div></div>
         <p class="mon-note" style="margin:0">Com a sua chave da xAI, cada cena ganha um fundo criado por IA: vídeo de verdade, sua foto falando ou imagens desenhadas. ${settings.xaiKey ? "<b>Chave da xAI configurada.</b>" : "Precisa da chave da xAI (console.x.ai), paga por uso."}</p>
         <div><b style="font-size:13px">1. O que a IA vai fazer</b>
           <div class="grid" style="margin-top:8px">${Object.entries(XAI_MODES).map(([k, m]) => optCard(ai.mode === k, `data-aimode="${k}"`, m.ico, m.name, m.desc)).join("")}</div></div>
@@ -1246,7 +1250,7 @@ function renderClipRows() {
     const has = !!s.clipUrl, canAct = !clipsRunning && settings.xaiKey;
     const imgBtn = ai.mode === "imagem" || ai.mode === "foto_ia" || s.img ? `<label class="btn sm ghost" for="simg-${s.id}" title="Enviar imagem da cena">📷${s.img ? " ✓" : ""}</label><input id="simg-${s.id}" data-simg="${s.id}" type="file" accept="image/*" hidden>` : "";
     return `<div class="clip-row"><span class="pill">${x.i + 1}</span>
-      <span style="min-width:0"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.title)}</span><small class="mon-note">${clipSeconds(x)} s</small>${j && j.status === "err" ? `<br><small style="color:#ff8a7a">${esc(j.msg)}</small>` : ""}</span>
+      <span style="min-width:0"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.title)}</span><small class="mon-note">${clipSeconds(x)} s</small>${j && j.status === "err" ? `<br><small style="color:#ff8a7a">${esc(j.msg)}</small>${/crédito/i.test(j.msg) ? ` <a class="btn sm" href="${XAI_CREDITOS}" target="_blank" rel="noopener" style="margin-top:4px">💳 Comprar créditos na xAI</a>` : ""}` : ""}</span>
       <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">${j ? `<span class="pill ${j.status}">${esc(j.status === "run" ? j.msg : j.status === "ok" ? "Pronto" : "Erro")}</span>` : ""}${imgBtn}
         ${has ? `<a class="btn sm ghost" href="${esc(s.clipUrl)}" target="_blank" rel="noopener" title="Abrir ou baixar o clipe">Abrir</a>` : ""}
         ${canAct ? `<button class="btn sm ghost" data-clip="${s.id}">${has || (s.img && s.aiImg) ? "Refazer" : "Gerar"}</button>` : ""}
@@ -1624,7 +1628,7 @@ SOBRE O APP "Estúdio de Vídeos":
 - As chaves valem só na sessão; não ficam salvas no servidor. Ao clicar em Sair ou fechar, precisa colar de novo.
 
 COMO CRIAR A CHAVE DA GROQ: console.groq.com -> criar conta ou entrar (pode ser com Google) -> API Keys -> Create API Key -> copiar (aparece uma vez).
-COMO CRIAR A CHAVE DA xAI (site em inglês): console.x.ai -> Sign up/Sign in (criar conta/entrar com X, Google ou e-mail; se pedir Create team, criar com qualquer nome) -> Settings (configurações) -> menu Team -> Billing (cobrança): Payment method (cartão) e Buy credits/Top up (créditos pré-pagos; 5 a 10 dólares dão vários vídeos; sem mensalidade) -> Back (voltar) -> no menu principal da esquerda, API Keys -> Create API Key -> Name: appvideos -> Create/Save -> Copy (a chave começa com xai- e aparece uma vez). Criar a chave é grátis; só cobra ao gerar.
+COMO CRIAR A CHAVE DA xAI (site em inglês): console.x.ai -> Sign up/Sign in (criar conta/entrar com X, Google ou e-mail; se pedir Create team, criar com qualquer nome) -> comprar créditos direto no link https://console.x.ai/team/default/billing (ou Settings -> Team -> Billing) -> API spend management -> Purchase credits (cartão de crédito, entra na hora; 5 a 10 dólares dão vários vídeos; sem mensalidade; Auto top-up é recarga automática opcional). No app também há o botão "💳 Comprar créditos na xAI" na seção IA paga. -> Back (voltar) -> no menu principal da esquerda, API Keys -> Create API Key -> Name: appvideos -> Create/Save -> Copy (a chave começa com xai- e aparece uma vez). Criar a chave é grátis; só cobra ao gerar.
 NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe) e chaves criadas no painel do Cursor (tipo Cursor, começando com grok_). Só serve a chave xai- criada em console.x.ai.
 Tradução dos menus da xAI: Usage = uso/gastos, Models = modelos, Team members = membros, Security = segurança, Audit Log = registro de atividades, Domains = domínios, Observability = monitoramento.
 COMO CRIAR A CHAVE DA GROQ (site em inglês): console.groq.com -> Sign up/Log in (Continue with Google) -> API Keys -> Create API Key -> Display name -> Submit -> Copy (começa com gsk_, aparece uma vez).
@@ -1885,9 +1889,11 @@ O site também é em inglês. Ao lado de cada botão está o que ele significa.
 
 **Parte 2: colocar créditos** (sem créditos a chave não gera nada)
 
-4. Clique no seu nome ou na engrenagem para abrir **Settings** (configurações).
-5. No menu **Team** (equipe), clique em **Billing** (cobrança).
-6. Adicione um cartão em **Payment method** (forma de pagamento) e compre créditos em **Buy credits** / **Top up** (comprar créditos).
+4. Já logado na xAI, clique aqui: 👉 **[💳 Comprar créditos na xAI](https://console.x.ai/team/default/billing)** (abre direto a página **Billing**, de cobrança).
+   Se preferir pelo menu: clique na engrenagem **Settings** (configurações) e, no menu **Team** (equipe), em **Billing** (cobrança).
+5. Na parte **API spend management** (controle de gastos), clique em **Purchase credits** / **Buy credits** (comprar créditos).
+6. Escolha o valor e pague com **cartão de crédito** (os créditos entram na hora). Pode pedir para salvar o cartão.
+   Opcional: **Auto top-up** (recarga automática) compra créditos sozinho quando o saldo acaba. Se não quiser surpresas, deixe desligado.
    **5 a 10 dólares** já dão para vários vídeos. É pré-pago: **não tem mensalidade**.
 
 **Parte 3: criar a chave**
@@ -2060,7 +2066,7 @@ O WebM abre no computador e sobe no YouTube; para WhatsApp/Instagram, prefira o 
 **Sumiram os meus projetos**: eles ficam salvos **no navegador** onde você criou. Em outro computador ou
 navegador, eles não aparecem. Use **Meus vídeos** no estúdio para abrir os antigos.
 
-**Erro na IA paga ("sem créditos")**: coloque créditos em **Billing** no console.x.ai.
+**Erro na IA paga ("sem créditos")**: clique em **[💳 Comprar créditos na xAI](https://console.x.ai/team/default/billing)** e compre créditos. O mesmo botão aparece na seção **IA paga** do app.
 """)
 
 
