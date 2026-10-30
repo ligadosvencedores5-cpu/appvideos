@@ -765,7 +765,7 @@ def fotos_automaticas(texto, quantidade):
     if not pasta:
         return [], None
     escolha = [(pasta, i) for i in range(len(banco_fotos()[pasta]))]
-    random.shuffle(escolha)
+    random.Random(texto).shuffle(escolha)  # mesma escolha na prévia e no vídeo
     for extra in BANCO_EXTRAS.get(pasta, []):
         escolha += [(extra, i) for i in range(len(banco_fotos().get(extra, [])))]
     return escolha[:max(quantidade, 1)], pasta
@@ -1499,6 +1499,157 @@ def salvar_galeria(titulo, tipo, dados=None, url=None):
 
 
 # ---------------- aba grátis ----------------
+def escolher_fotos_banco(texto, quantidade):
+    """Fotos do banco que vão para o vídeo: as marcadas pela pessoa ou, se nenhuma,
+    as escolhidas automaticamente pelo tipo de negócio (a prévia e o vídeo usam as mesmas)."""
+    sel = [(p, i) for p, i in st.session_state.get("fotos_banco", [])
+           if p in banco_fotos() and i < len(banco_fotos()[p])]
+    if sel:
+        return sel, True
+    auto, _ = fotos_automaticas(texto, quantidade)
+    if not auto:
+        auto = [(p, i) for p, lista in banco_fotos().items() for i in range(len(lista))]
+        random.Random(texto or "appvideo").shuffle(auto)
+        auto = auto[:quantidade]
+    return auto, False
+
+
+def _miniatura_upload(arquivo):
+    img = ImageOps.fit(Image.open(arquivo).convert("RGB"), (240, 427), Image.LANCZOS)
+    b = io.BytesIO()
+    img.save(b, "JPEG", quality=78)
+    return b.getvalue()
+
+
+PAINEL_HTML = r"""
+<style>
+:root{--bg:#0b1020;--painel:#111831;--borda:#24304f;--txt:#e7ecf7;--sub:#93a0bd;--acc:__ACC__;--acc2:__ACC2__}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{background:transparent;color:var(--txt)}
+.est{background:var(--bg);border:1px solid var(--borda);border-radius:18px;padding:14px;overflow:hidden}
+.topo{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.marca{display:flex;align-items:center;gap:8px;font-weight:800;font-size:15px}
+.marca i{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-style:normal;font-size:13px}
+.selo{font-size:11px;color:var(--sub);background:var(--painel);border:1px solid var(--borda);padding:5px 9px;border-radius:999px;white-space:nowrap}
+.meio{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:14px}
+.tela{position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:#000;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+.cena{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0;transition:opacity .45s ease}
+.cena.on{opacity:1}
+.cena .img{position:absolute;inset:-8%;background-size:cover;background-position:center;transform:scale(1);transition:transform 4s linear}
+.cena.on .img{transform:scale(1.12)}
+.cena:nth-child(even).on .img{transform:scale(1.12) translateX(-3%)}
+.sombra{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.05) 40%,rgba(0,0,0,.7))}
+.pilula{position:absolute;top:12px;left:12px;background:var(--acc);color:#111;font-weight:800;font-size:10px;padding:5px 10px;border-radius:999px;letter-spacing:.3px;max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frase{position:absolute;left:8%;right:8%;bottom:14%;background:rgba(10,14,30,.78);border-left:5px solid var(--acc);border-radius:10px;padding:10px 12px;font-weight:800;font-size:16px;line-height:1.25;transform:translateY(14px);opacity:0;transition:all .5s ease .25s}
+.cena.on .frase{transform:none;opacity:1}
+.cta{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:20px;background:linear-gradient(160deg,var(--acc2),#0b1020)}
+.cta b{font-size:22px;line-height:1.1;text-transform:uppercase}
+.cta span{background:var(--acc);color:#111;font-weight:800;padding:9px 16px;border-radius:999px;font-size:14px}
+.cta small{color:#dfe5f3;font-size:12px}
+.ctrl{display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--sub)}
+.bts{display:flex;gap:6px}
+.bt{width:34px;height:34px;border-radius:10px;border:1px solid var(--borda);background:var(--painel);color:var(--txt);cursor:pointer;font-size:14px}
+.bt.play{background:var(--acc);border-color:var(--acc);color:#111;width:42px}
+.lista{display:flex;flex-direction:column;gap:8px;max-height:calc(100% - 4px);overflow:auto}
+.lista h4{font-size:14px;margin-bottom:2px}
+.item{display:flex;gap:10px;align-items:center;background:var(--painel);border:1.5px solid var(--borda);border-radius:12px;padding:7px;cursor:pointer;transition:border-color .2s}
+.item.on{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+.item .mini{width:42px;height:62px;border-radius:8px;background-size:cover;background-position:center;flex:none}
+.item p{font-size:12px;font-weight:700;line-height:1.25}
+.item small{display:block;color:var(--sub);font-weight:500;font-size:11px;margin-top:3px}
+.dica{background:var(--painel);border:1px dashed var(--borda);border-radius:12px;padding:10px;font-size:11.5px;color:var(--sub);line-height:1.45}
+.linha{margin-top:14px;background:var(--painel);border:1px solid var(--borda);border-radius:14px;padding:10px 10px 12px;position:relative}
+.regua{position:relative;height:16px;font-size:10px;color:var(--sub);margin-left:4px;margin-right:4px}
+.regua span{position:absolute;transform:translateX(-50%)}
+.trilha{position:relative;margin:4px 4px 0;cursor:pointer}
+.fitas{display:flex;height:58px;gap:3px}
+.fita{height:100%;border-radius:8px;background-size:cover;background-position:center;position:relative;overflow:hidden;opacity:.75;transition:opacity .2s;border:1.5px solid transparent}
+.fita.on{opacity:1;border-color:var(--acc)}
+.fita em{position:absolute;left:4px;bottom:3px;font-style:normal;font-size:9.5px;font-weight:800;background:rgba(0,0,0,.6);padding:1px 5px;border-radius:5px}
+.onda{display:flex;align-items:center;gap:2px;height:26px;margin-top:6px;border-radius:7px;background:rgba(124,58,237,.12);padding:0 6px;overflow:hidden}
+.onda i{flex:1;background:var(--acc);border-radius:2px;opacity:.85;min-width:2px}
+.cursor{position:absolute;top:-20px;bottom:-4px;width:2px;background:var(--acc);left:0;pointer-events:none}
+.cursor:before{content:"";position:absolute;top:0;left:-5px;width:12px;height:12px;border-radius:50%;background:var(--acc)}
+@media (max-width:620px){.selo{display:none}.meio{grid-template-columns:1fr}.tela{max-width:260px;margin:0 auto;width:100%}.lista{display:none}.ctrl{max-width:260px;margin:10px auto 0}}
+</style>
+<div class="est">
+  <div class="topo"><div class="marca"><i>▶</i>Estúdio Appvideo</div>
+    <div class="selo">Prévia rápida • o vídeo final terá narração e música</div></div>
+  <div class="meio">
+    <div>
+      <div class="tela" id="tela"></div>
+      <div class="ctrl"><span id="tempo">00:00 / 00:00</span>
+        <div class="bts"><button class="bt" id="ant">⏮</button><button class="bt play" id="play">⏸</button><button class="bt" id="prox">⏭</button></div></div>
+    </div>
+    <div class="lista" id="lista"><h4>Cenas do anúncio</h4></div>
+  </div>
+  <div class="linha"><div class="regua" id="regua"></div>
+    <div class="trilha" id="trilha"><div class="fitas" id="fitas"></div><div class="onda" id="onda"></div><div class="cursor" id="cursor"></div></div>
+  </div>
+</div>
+<script>
+const D=__DADOS__;
+const tela=document.getElementById('tela'),lista=document.getElementById('lista'),fitas=document.getElementById('fitas');
+const cenas=D.cenas.concat([{cta:true,dur:3.5,txt:D.cta||'Chamada final'}]);
+let ini=[],t=0,total=0;cenas.forEach(c=>{ini.push(total);total+=c.dur});
+cenas.forEach((c,i)=>{
+  const el=document.createElement('div');el.className='cena';
+  if(c.cta){el.innerHTML='<div class="cta"><b></b><span></span><small></small></div>';
+    el.querySelector('b').textContent=D.produto||'Sua empresa';el.querySelector('span').textContent=D.cta||'Fale com a gente';
+    el.querySelector('small').textContent=D.contato||'';}
+  else{el.innerHTML='<div class="img"></div><div class="sombra"></div><div class="pilula"></div><div class="frase"></div>';
+    el.querySelector('.img').style.backgroundImage='url('+c.img+')';el.querySelector('.pilula').textContent=(D.produto||'SUA EMPRESA').toUpperCase();
+    el.querySelector('.frase').textContent=c.txt;}
+  tela.appendChild(el);
+  const it=document.createElement('div');it.className='item';
+  it.innerHTML='<div class="mini"></div><div><p></p><small></small></div>';
+  it.querySelector('.mini').style.background=c.cta?'linear-gradient(160deg,'+D.acc2+',#0b1020)':'url('+c.img+') center/cover';
+  it.querySelector('p').textContent=c.cta?'Cartão final':(c.vazio?'Cena '+(i+1):c.txt);
+  it.querySelector('small').textContent=(c.cta?'Chamada + contato':(c.vazio?'Gere o roteiro para ver o texto':'Cena '+(i+1)))+' • '+c.dur.toFixed(1)+'s';
+  it.onclick=()=>{t=ini[i]+.01;tocando=true;};lista.appendChild(it);
+  const f=document.createElement('div');f.className='fita';f.style.flex=c.dur;
+  f.style.background=c.cta?'linear-gradient(160deg,'+D.acc2+',#0b1020)':'url('+c.img+') center/cover';
+  f.innerHTML='<em>'+(c.cta?'FIM':(i+1))+'</em>';fitas.appendChild(f);
+});
+if(cenas.length>1){const d=document.createElement('div');d.className='dica';
+  d.textContent='Toque numa cena para pular até ela. As fotos são as que você enviou e as escolhidas no banco.';lista.appendChild(d);}
+const onda=document.getElementById('onda');let s=7;for(let k=0;k<90;k++){s=(s*9301+49297)%233280;const h=18+70*(s/233280);
+  const b=document.createElement('i');b.style.height=h+'%';onda.appendChild(b);}
+const regua=document.getElementById('regua');for(let k=0;k<=Math.floor(total);k+=Math.max(1,Math.round(total/6))){
+  const sp=document.createElement('span');sp.style.left=(k/total*100)+'%';sp.textContent='00:'+String(k).padStart(2,'0');regua.appendChild(sp);}
+const els=tela.children,its=lista.querySelectorAll('.item'),fts=fitas.children,cur=document.getElementById('cursor'),tempo=document.getElementById('tempo');
+let tocando=true,atual=-1,ult=performance.now();const fmt=x=>'00:'+String(Math.floor(x)).padStart(2,'0');
+function quadro(agora){const dt=(agora-ult)/1000;ult=agora;if(tocando){t+=dt;if(t>=total)t=0;}
+  let i=0;while(i<cenas.length-1&&t>=ini[i+1])i++;
+  if(i!==atual){[els,its,fts].forEach(g=>{for(const e of g)e.classList.remove('on')});els[i].classList.add('on');its[i]&&its[i].classList.add('on');fts[i].classList.add('on');atual=i;}
+  cur.style.left=(t/total*100)+'%';tempo.textContent=fmt(t)+' / '+fmt(total);requestAnimationFrame(quadro);}
+requestAnimationFrame(quadro);
+const play=document.getElementById('play');play.onclick=()=>{tocando=!tocando;play.textContent=tocando?'⏸':'▶';};
+document.getElementById('prox').onclick=()=>{t=ini[Math.min(atual+1,cenas.length-1)]+.01;};
+document.getElementById('ant').onclick=()=>{t=ini[Math.max(atual-1,0)]+.01;};
+document.getElementById('trilha').onclick=e=>{const r=e.currentTarget.getBoundingClientRect();t=Math.max(0,Math.min(total-.01,(e.clientX-r.left)/r.width*total));};
+</script>
+"""
+
+
+def painel_estudio(miniaturas, textos, produto, cta, contato, tema, dur):
+    """Painel de estúdio: prévia vertical + lista de cenas + linha do tempo animada."""
+    import streamlit.components.v1 as components
+    cor = lambda c: "#%02x%02x%02x" % c
+    cenas = [{"img": "data:image/jpeg;base64," + base64.b64encode(m).decode(),
+              "txt": (textos[i] if i < len(textos) and textos[i] else "Sua frase aparece aqui ✍️"),
+              "vazio": not (i < len(textos) and textos[i]),
+              "dur": float(dur)} for i, m in enumerate(miniaturas)]
+    acc = TEMAS[tema]["acc"]
+    lum = 0.299 * acc[0] + 0.587 * acc[1] + 0.114 * acc[2]
+    dados = {"cenas": cenas, "produto": produto, "cta": cta, "contato": contato,
+             "acc": cor(acc) if 90 < lum < 245 else "#facc15",
+             "acc2": cor(TEMAS[tema]["c2"]) if sum(TEMAS[tema]["c2"]) < 600 else "#312e81"}
+    html = (PAINEL_HTML.replace("__DADOS__", json.dumps(dados))
+            .replace("__ACC__", dados["acc"]).replace("__ACC2__", dados["acc2"]))
+    components.html(html, height=840, scrolling=False)
+
+
 def _alternar_foto(pasta, i):
     sel = list(st.session_state.get("fotos_banco", []))
     if (pasta, i) in sel:
@@ -1654,6 +1805,28 @@ def aba_gratis():
     if fonte_img == FONTE_BANCO:
         galeria_banco(f"{produto} {descricao}")
 
+    # ---- prévia no estúdio (mesmas fotos que vão para o vídeo) ----
+    fotos_escolhidas = []
+    if fonte_img == FONTE_BANCO:
+        fotos_escolhidas, _ = escolher_fotos_banco(f"{produto} {descricao}", n_cenas)
+    minis_up = [_miniatura_upload(f) for f in (fotos_up or [])]
+    miniaturas = []
+    for i in range(n_cenas):
+        if fonte_img == "Só minhas fotos":
+            if minis_up:
+                miniaturas.append(minis_up[i % len(minis_up)])
+        elif i < len(minis_up):
+            miniaturas.append(minis_up[i])
+        elif fotos_escolhidas:
+            p_, k_ = fotos_escolhidas[(i - len(minis_up)) % len(fotos_escolhidas)]
+            miniaturas.append(miniatura(p_, k_))
+    st.markdown("#### 🎬 Prévia no estúdio")
+    if miniaturas:
+        painel_estudio(miniaturas, [c.get("texto_tela", "") for c in st.session_state.cenas],
+                       produto.strip(), cta or st.session_state.cta_gerado, contato, tema, dur_min)
+    else:
+        st.info("Envie suas fotos para ver a prévia do anúncio aqui.")
+
     if st.button("📝 1. Gerar roteiro com IA", key=f"g_roteiro_{st.session_state.rodada}"):
         if not produto.strip():
             st.warning("Informe o produto ou serviço.")
@@ -1705,7 +1878,7 @@ def aba_gratis():
                        tema=tema, estilo_img=estilo_img, fonte_img=fonte_img, musica=musica,
                        narracao=narracao, dur_min=dur_min, usar_xai=usar_xai,
                        categoria=categoria, descricao=descricao,
-                       fotos_banco=list(st.session_state.get("fotos_banco", [])),
+                       fotos_banco=list(fotos_escolhidas),
                        voz=VOZES[voz_nome], velocidade=VELOCIDADES[velocidade],
                        audio_proprio=(st.session_state.get("audio_proprio")
                                       if VOZES[voz_nome] == "MINHA_VOZ" else None))
