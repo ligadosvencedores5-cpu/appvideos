@@ -907,7 +907,7 @@ function xaiCost() { return TL.scenes.reduce((a, x) => a + custoCena(x), 0); }
 function custoNarracao() { return P.scenes.reduce((a, s) => a + (s.text || "").length, 0) * XAI_TTS_PRICE; }
 const usd = v => "US$ " + (v < 0.01 && v > 0 ? v.toFixed(3) : v.toFixed(2));
 /* Ponte com o servidor: no app do Streamlit, os pedidos à xAI saem do servidor (Python), não do navegador.
-   A chave da xAI fica só no servidor e os clipes chegam já baixados, sem bloqueio do navegador. */
+   A chave do Grok fica só no servidor e os clipes chegam já baixados, sem bloqueio do navegador. */
 const BR = { ok: false, pend: {}, n: 0, tries: 0 };
 window.addEventListener("message", e => {
   const m = e.data; if (!m || typeof m !== "object") return;
@@ -929,7 +929,7 @@ function bridgeCall(method, path, body) {
 }
 function xaiError(status, j, body) {
   const usaImagem = body && (body.image || body.reference_images);
-  if (status === 401 || status === 403) return "A xAI recusou a chave. Clique em Sair e entre de novo com a chave da xAI correta.";
+  if (status === 401 || status === 403) return "A xAI recusou a chave. Clique em Sair e entre de novo com a chave do Grok correta.";
   if (status === 402) return "Sem créditos na conta da xAI. Use o botão 💳 Comprar créditos na xAI.";
   if (status === 429) return "Muitos pedidos seguidos na xAI. Espere um minuto e tente de novo.";
   let m = j?.error?.message || j?.error || j?.message || ("Erro " + status);
@@ -939,14 +939,14 @@ function xaiError(status, j, body) {
 }
 function keyPanel(extra = "") {
   return `<div class="keybox" style="border:1px dashed var(--lilac);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
-    <b style="font-size:15px">🔑 Coloque a sua chave da xAI para usar a IA paga</b>
+    <b style="font-size:15px">🔑 Coloque a sua chave do Grok para usar a IA paga</b>
     <ol style="margin:0;padding-left:20px;font-size:13.5px;color:var(--muted);display:flex;flex-direction:column;gap:4px">
       <li>Clique em <b>Obter minha chave</b>. Abre o site da xAI (em inglês). Entre na sua conta e clique em <b>API Keys</b> (chaves de API) no menu da esquerda.</li>
-      <li>Clique em <b>Create API Key</b> (criar chave), dê um nome e confirme. Copie a chave: ela começa com <b>xai-</b> ou <b>grok_</b> (depende da sua conta; as duas servem).</li>
+      <li>Clique em <b>Create API Key</b> (criar chave), dê um nome e confirme. Copie a chave: ela começa com <b>grok_</b>.</li>
       <li>Volte aqui, cole a chave no campo abaixo e clique em <b>Salvar chave</b>.</li>
     </ol>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="${XAI_CHAVES}" target="_blank" rel="noopener">🔑 Obter minha chave na xAI</a><a class="btn" href="${XAI_CREDITOS}" target="_blank" rel="noopener">💳 Comprar créditos</a></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="xaiKeyIn" type="password" autocomplete="off" placeholder="Cole aqui a sua chave da xAI (xai-... ou grok_...)" style="flex:1 1 240px;width:auto" aria-label="Chave da xAI"><button class="btn primary" id="xaiKeySave">Salvar chave</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="${XAI_CHAVES}" target="_blank" rel="noopener">🔑 Obter minha chave do Grok</a><a class="btn" href="${XAI_CREDITOS}" target="_blank" rel="noopener">💳 Comprar créditos</a></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="xaiKeyIn" type="password" autocomplete="off" placeholder="Cole aqui a sua chave do Grok (grok_...)" style="flex:1 1 240px;width:auto" aria-label="Chave do Grok"><button class="btn primary" id="xaiKeySave">Salvar chave</button></div>
     <div id="xaiKeyMsg" role="status" aria-live="polite" style="font-size:14px;font-weight:600"></div>
     <span class="mon-note">${ENV.ponte ? "A chave vai só para o servidor e vale enquanto você estiver no app. Ela não fica salva no navegador." : "A chave fica salva só neste navegador."} Sem créditos, a chave não gera nada.</span>${extra}
   </div>`;
@@ -956,7 +956,7 @@ function keyMsg(txt, ok) { const el = document.getElementById("xaiKeyMsg"); if (
 async function saveXaiKey() {
   const inp = document.getElementById("xaiKeyIn"); const k = (inp?.value || "").trim();
   if (!k) { keyMsg("Cole a sua chave no campo acima antes de salvar."); toast("Cole a sua chave no campo antes de salvar."); inp?.focus(); return; }
-  if (!/^(xai-|grok_)/.test(k) || k.length < 20) { keyMsg("⚠️ Essa não parece uma chave da xAI. Ela começa com xai- ou grok_. Copie a chave inteira."); toast("Cole a chave da xAI inteira. Ela começa com xai- ou grok_."); inp?.focus(); return; }
+  if (!/^(xai-|grok_)/.test(k) || k.length < 20) { keyMsg("⚠️ Essa não parece uma chave do Grok. Ela começa com grok_. Copie a chave inteira."); toast("Cole a chave do Grok inteira. Ela começa com grok_."); inp?.focus(); return; }
   if (ENV.ponte) {
     if (!BR.ok) { bridgePing(); keyMsg("⏳ A conexão com o servidor ainda está iniciando. Espere alguns segundos e clique de novo."); toast("Espere alguns segundos e tente de novo."); return; }
     const btn = document.getElementById("xaiKeySave"); if (btn) { btn.disabled = true; btn.textContent = "Conferindo com a xAI…"; }
@@ -965,12 +965,12 @@ async function saveXaiKey() {
     catch (e) { if (btn) { btn.disabled = false; btn.textContent = "Salvar chave"; } keyMsg("⚠️ " + (e.message || String(e))); toast(e.message || String(e), 6000); return; }
   }
   settings.xaiKey = ENV.ponte ? "__servidor__" : k; if (!ENV.ponte) saveSettings();
-  keyBoxOpen = false; closeLayer(); renderStep(); toast("Chave da xAI conectada. Agora é só gerar!");
+  keyBoxOpen = false; closeLayer(); renderStep(); toast("Chave do Grok conectada. Agora é só gerar!");
 }
 function askXaiKey() {
   step = 7; keyBoxOpen = true; closeLayer(); renderStep();
   setTimeout(() => { const i = document.getElementById("xaiKeyIn"); if (i) { i.scrollIntoView({ behavior: "smooth", block: "center" }); i.focus(); } }, 80);
-  toast("Cole a sua chave da xAI no campo indicado e clique em Salvar chave.", 5000);
+  toast("Cole a sua chave do Grok no campo indicado e clique em Salvar chave.", 5000);
 }
 async function bridgeStatus() {
   try { const r = await bridgeCall("STATUS", "status"); if (r.ok && r.json?.hasXai) { settings.xaiKey = "__servidor__"; renderStep(); } } catch (e) {}
@@ -1352,7 +1352,7 @@ const VIEWS = [
 
   () => head(2, "Estilo da animação", "Cada estilo tem fundo animado, tipografia e transições próprias.") +
     `<div class="grid">${Object.entries(STYLES).map(([k, s]) => optCard(P.style === k, `data-style="${k}"`, "", s.name, s.desc, `<div class="swatch" style="background:${s.sw}"></div>`)).join("")}</div>` +
-    hint("Com a chave da xAI, cada cena também pode virar um <b>clipe animado gerado por IA</b> nesse estilo. Isso fica no último passo."),
+    hint("Com a chave do Grok, cada cena também pode virar um <b>clipe animado gerado por IA</b> nesse estilo. Isso fica no último passo."),
 
   () => head(3, "Quem apresenta?", "Use a sua foto, escolha um personagem ou faça o vídeo sem apresentador.") +
     `<div class="grid">${[["none", "🚫", "Sem apresentador", "Só texto e animação"], ["emoji", "🦊", "Personagem", "Bichos e pessoas animadas"], ["photo", "📸", "Minha foto", "Sua foto no vídeo"]].map(([id, ic, n, d]) => optCard(P.presenter.type === id, `data-ptype="${id}"`, ic, n, d)).join("")}</div>` +
@@ -1406,7 +1406,7 @@ const VIEWS = [
       `<div class="gen-card" style="margin-top:16px">
         <h3>🤖 IA paga: vídeo, imagens e voz (Grok Imagine · xAI)</h3>
         <div style="border:1px solid var(--rec);background:var(--rec-soft);border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start"><span style="font-size:20px;line-height:1.2">💸</span><div style="display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">Vídeos profissionais sem assinatura mensal.</b><span style="color:var(--fg)">Este app é uma ponte entre você e uma IA de vídeo profissional (Grok Imagine, da xAI). Em vez de pagar uma assinatura todo mês, você usa a sua própria chave e paga só pelo vídeo que gerar, direto na sua conta da xAI, a partir de poucos reais por vídeo.</span><span class="mon-note">O custo exato aparece abaixo, antes de você gerar.${P.aiSpent ? ` Gasto real já registrado neste projeto: <b>${usd(P.aiSpent)}</b>.` : ""}</span><a class="btn sm" href="${XAI_CREDITOS}" target="_blank" rel="noopener" style="align-self:flex-start;margin-top:4px">💳 Comprar créditos na xAI</a></div></div>
-        ${!settings.xaiKey || keyBoxOpen ? keyPanel(settings.xaiKey ? `<button class="btn ghost sm" id="xaiKeyCancel" style="align-self:flex-start">Manter a chave atual</button>` : "") : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="pill ok">✓ Chave da xAI conectada</span><button class="btn ghost sm" id="xaiKeyChange">Trocar chave</button></div>`}
+        ${!settings.xaiKey || keyBoxOpen ? keyPanel(settings.xaiKey ? `<button class="btn ghost sm" id="xaiKeyCancel" style="align-self:flex-start">Manter a chave atual</button>` : "") : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="pill ok">✓ Chave do Grok conectada</span><button class="btn ghost sm" id="xaiKeyChange">Trocar chave</button></div>`}
         <div class="seg" style="display:flex" role="tablist">${[["video", "🎬 Vídeo"], ["imagens", "🖼️ Imagens"], ["voz", "🎙️ Voz da IA"]].map(([k, n]) => `<button data-aitab="${k}" class="${ai.tab === k ? "on" : ""}" role="tab" aria-selected="${ai.tab === k}">${n}</button>`).join("")}</div>
         ${ai.tab === "video" ? `
         <div><b style="font-size:13px">1. O que a IA vai fazer</b>
@@ -1427,7 +1427,7 @@ const VIEWS = [
           ${ai.voice !== "auto" ? `<button class="btn sm" data-ouvir="${ai.voice}">▶ Ouvir</button>` : ""}</div>
           <span class="mon-note">${XAI_MODELS[ai.model].voices ? "Escolher uma voz usa o modo de referência da xAI (até 720p)." : "Para escolher a voz, use o modelo 1.5. No Lite, a IA escolhe a voz sozinha."}</span></div>` : ""}` : hint("Neste modo, use a aba <b>🖼️ Imagens</b> para escolher o modelo, a qualidade e a resolução das imagens.")}
         <div class="hint" style="margin-top:0"><span>💰</span><div>Custo estimado das cenas: <b>${usd(xaiCost())}</b> (${ai.mode === "foto_ia" ? TL.scenes.length + " imagens · " + usd(precoImagem()) + " cada" : TL.scenes.reduce((a, x) => a + clipSeconds(x), 0) + " s de vídeo em " + ai.res + " · " + usd(precoVideo()) + "/s"}). Valores aproximados, cobrados na conta da xAI de quem gera.</div></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="clipBtn" ${clipsRunning ? "disabled" : ""}>${clipsRunning ? "Gerando com IA…" : (settings.xaiKey ? (ai.mode === "foto_ia" ? "🎨 Gerar imagens de todas as cenas" : "🤖 Gerar clipes de todas as cenas") : "🔑 Colocar a chave da xAI (campo acima)")}</button>${(Object.keys(runtime.clipVideos).length || P.scenes.some(s => s.img)) && !clipsRunning ? `<button class="btn ghost" id="clipClear">Remover fundos de IA</button>` : ""}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="clipBtn" ${clipsRunning ? "disabled" : ""}>${clipsRunning ? "Gerando com IA…" : (settings.xaiKey ? (ai.mode === "foto_ia" ? "🎨 Gerar imagens de todas as cenas" : "🤖 Gerar clipes de todas as cenas") : "🔑 Colocar a chave do Grok (campo acima)")}</button>${(Object.keys(runtime.clipVideos).length || P.scenes.some(s => s.img)) && !clipsRunning ? `<button class="btn ghost" id="clipClear">Remover fundos de IA</button>` : ""}</div>
         <details class="vis"${P.scenes.some(s => s.clipUrl) ? " open" : ""}><summary style="font-size:13px">✂️ Editar e estender clipes prontos (botões ✏️ e ➕ em cada cena)</summary>
           <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
             <label class="f" for="aiEdit">O que mudar no clipe (botão ✏️ · clipes de até 8,7 s)<input id="aiEdit" type="text" placeholder="Ex.: deixe o céu ao entardecer e adicione neve caindo"></label>
@@ -1698,13 +1698,13 @@ function openSettings() {
   L.innerHTML = `<div class="scrim" id="scrim"><form class="sheet" id="setForm" role="dialog" aria-label="Chaves de IA">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2>Chaves de IA</h2><button type="button" class="btn sm ghost" id="closeL">Fechar</button></div>
     ${ENV.viewer ? hint("Você está na <b>página publicada</b>. Aqui o roteiro é escrito pela IA do Claude e as chaves abaixo não funcionam, porque a página não pode acessar outros sites. Use as chaves na <b>versão para computador</b> (arquivo .html que te mandei no chat).", "warn") : ""}
-    ${ENV.hostAI ? hint("Neste app, a chave da Groq vai no campo <b>Sua chave da Groq</b>, no topo da página. Aqui você só precisa preencher a chave da xAI, se quiser clipes de IA.") : ""}
+    ${ENV.hostAI ? hint("Neste app, a chave da Groq vai no campo <b>Sua chave da Groq</b>, no topo da página. Aqui você só precisa preencher a chave do Grok, se quiser clipes de IA.") : ""}
     <h3 style="margin:8px 0 0;font-family:var(--display)">Groq · roteiros</h3>
     <label class="f" for="gk">Chave da Groq (começa com gsk_)<input id="gk" type="password" autocomplete="off" value="${esc(settings.groqKey)}" placeholder="gsk_..."></label>
     <label class="f" for="gm">Modelo<input id="gm" type="text" value="${esc(settings.groqModel)}"></label>
     <span class="mon-note">Crie a chave em console.groq.com → API Keys. Modelos atuais: openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b.</span>
     <h3 style="margin:14px 0 0;font-family:var(--display)">xAI · clipes animados (Grok Imagine)</h3>
-    <label class="f" for="xk">Chave da xAI (começa com xai- ou grok_)<input id="xk" type="password" autocomplete="off" value="${esc(settings.xaiKey)}" placeholder="xai-... ou grok_..."></label>
+    <label class="f" for="xk">Chave do Grok (começa com grok_)<input id="xk" type="password" autocomplete="off" value="${esc(settings.xaiKey)}" placeholder="grok_..."></label>
     <span class="mon-note">Crie a chave em console.x.ai. O modelo, a resolução e o custo você escolhe no passo Gerar.</span>
     <div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary" type="submit">Salvar</button><button class="btn ghost" type="button" id="clrKeys">Apagar chaves</button></div>
     <p class="mon-note">As chaves ficam salvas só neste navegador, neste computador. Nunca compartilhe suas chaves.</p>
@@ -1982,7 +1982,7 @@ function idiomasCard() {
 // roteiro entregue pelo servidor (ex.: app no Streamlit, que guarda a chave da Groq em segredo)
 const INJ = window.__EVS_INJECT__;
 if (INJ && INJ.engine) ENV.hostAI = INJ.engine;
-if (INJ && INJ.ponte) { ENV.ponte = true; if (settings.xaiKey !== "__servidor__") settings.xaiKey = ""; } // no hub, a chave da xAI fica só no servidor
+if (INJ && INJ.ponte) { ENV.ponte = true; if (settings.xaiKey !== "__servidor__") settings.xaiKey = ""; } // no hub, a chave do Grok fica só no servidor
 if (INJ && INJ.engine) bridgePing();
 if (INJ && Array.isArray(INJ.scenes) && INJ.scenes.length && INJ.nonce && store.get("evs.injected", "") !== INJ.nonce) {
   try {
@@ -2191,14 +2191,14 @@ CONHECIMENTO = """
 SOBRE O APP "Estúdio de Vídeos":
 - Cria vídeos animados para redes sociais (Reels, Stories, TikTok, YouTube, WhatsApp, anúncios).
 - É uma ponte entre a pessoa e IAs profissionais: cada um usa a própria chave, sem assinatura mensal.
-- Uma chave só: a chave do Grok Imagine (xAI), que começa com xai- ou grok_ (depende da conta da pessoa na xAI; as duas servem). É obrigatória para entrar. Ela liga toda a IA: roteiros, calendário, chat de dúvidas, texto do post, tradução, clipes, imagens e voz. Criar a chave é grátis; a IA usa créditos pré-pagos da xAI (sem mensalidade).
+- Uma chave só: a chave do Grok Imagine (xAI), que começa com grok_. (Contas antigas da xAI podem ter chave começando com xai-: ela também funciona, mas nas explicações fale só da chave grok_.) É obrigatória para entrar. Ela liga toda a IA: roteiros, calendário, chat de dúvidas, texto do post, tradução, clipes, imagens e voz. Criar a chave é grátis; a IA usa créditos pré-pagos da xAI (sem mensalidade).
 - O topo do app tem duas abas: "🎬 Vídeos gratuitos" (modelos prontos por nicho, roteiro escrito pela pessoa, fundos animados, marca, música; não gasta créditos) e "⭐ Vídeos pagos (IA profissional)" (nota "Vídeos profissionais sem assinatura mensal", botão de comprar créditos e as sub-abas "✨ Roteiro com IA", "📅 Meu mês de conteúdo" e "🎥 Clipes, imagens e voz").
 - Custos de texto: roteiro com IA menos de 1 centavo de dólar; calendário do mês cerca de 1 centavo; cada mensagem do chat frações de centavo.
 - Sem créditos: os vídeos gratuitos funcionam; a IA mostra o aviso "Sua conta da xAI está sem créditos" com o botão de comprar.
 - As chaves valem só na sessão; não ficam salvas no servidor. Ao clicar em Sair ou fechar, precisa colar de novo.
 
 COMO CRIAR A CHAVE DA xAI (site em inglês): console.x.ai -> Sign up/Sign in (criar conta/entrar com X, Google ou e-mail; se pedir Create team, criar com qualquer nome) -> comprar créditos no menu Billing do site https://console.x.ai/ (ou Settings -> Team -> Billing) -> API spend management -> Purchase credits (cartão de crédito, entra na hora; 5 a 10 dólares dão vários vídeos; sem mensalidade; Auto top-up é recarga automática opcional). No app também há o botão "💳 Comprar créditos na xAI" na seção IA paga. -> Back (voltar) -> no menu principal da esquerda, API Keys -> Create API Key -> Name: appvideos -> Create/Save -> Copy (a chave começa com xai- e aparece uma vez). Criar a chave é grátis; só cobra ao gerar.
-NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe). A chave certa é criada em console.x.ai -> API Keys e começa com xai- (painel antigo, console.x.ai) ou grok_ (painel novo, grok.com/dashboard). Quem decide o formato é a xAI, conforme a equipe da pessoa; as duas servem. Cada equipe tem chaves e créditos separados: a chave gasta os créditos da equipe onde foi criada. O app confere a chave direto na xAI ao entrar ou ao salvar no passo 8; se a xAI recusar, aparece um aviso.
+NÃO SERVEM para o app: "Management Keys" (chaves de gerenciamento da equipe). A chave certa é criada em console.x.ai -> API Keys e começa com grok_ (contas antigas podem ter xai-, que também funciona; não puxe esse assunto se a pessoa não perguntar). Cada equipe tem chaves e créditos separados: a chave gasta os créditos da equipe onde foi criada. O app confere a chave direto na xAI ao entrar ou ao salvar no passo 8; se a xAI recusar, aparece um aviso.
 Tradução dos menus da xAI: Usage = uso/gastos, Models = modelos, Team members = membros, Security = segurança, Audit Log = registro de atividades, Domains = domínios, Observability = monitoramento.
 
 DOIS CAMINHOS: (A) VÍDEO GRATUITO = aba "🎬 Vídeos gratuitos": modelo pronto por nicho (ou roteiro escrito à mão no passo 6), fundos animados do app, sem gastar créditos. (B) VÍDEO PAGO = aba "⭐ Vídeos pagos": gerar roteiro com IA, depois passo 8 Gerar > seção IA paga > escolher modo, modelo (Lite barato / 1.5 melhor), resolução (comece 480p), conferir custo, Gerar clipes de todas as cenas (ou só uma para testar), esperar Pronto, depois Finalizar vídeo e Baixar.
@@ -2295,7 +2295,7 @@ def chat_duvidas():
             with st.chat_message("assistant", avatar="🎬"):
                 st.markdown(
                     f"Oi, {html.escape(st.session_state['evs_user'])}! Sou o assistente do Estúdio de Vídeos. "
-                    "Como posso ajudar? Exemplos: *Como pego a chave da xAI?*, *Quanto custa um vídeo de 30 segundos?*, "
+                    "Como posso ajudar? Exemplos: *Como pego a chave do Grok?*, *Quanto custa um vídeo de 30 segundos?*, "
                     "*Me dá 3 ideias de vídeo para uma pizzaria.*"
                 )
         for m in hist:
@@ -2430,7 +2430,7 @@ def atender_lote(lote):
     saida = []
     for r in (lote.get("reqs") or [])[:6]:
         rid = str(r.get("reqId", ""))[:80]
-        if r.get("method") == "STATUS":  # o estúdio pergunta se já tem chave da xAI
+        if r.get("method") == "STATUS":  # o estúdio pergunta se já tem chave do Grok
             saida.append({"reqId": rid, "ok": True, "status": 200, "json": {"hasXai": bool(st.session_state.get("evs_xai"))}})
             continue
         if r.get("method") == "GROQ":  # texto do post, tradução etc.: o Grok (xAI) é chamado pelo servidor
@@ -2442,7 +2442,7 @@ def atender_lote(lote):
             continue
         if r.get("method") == "KEY":  # a pessoa colou a chave dentro do estúdio: guarda só no servidor
             nova = str((r.get("body") or {}).get("key", "")).strip()
-            erro = None if xai_prefixo_ok(nova) else "Essa chave não parece da xAI. Ela começa com xai- ou grok_."
+            erro = None if xai_prefixo_ok(nova) else "Essa chave não parece do Grok. Ela começa com grok_."
             erro = erro or xai_check(nova)
             if not erro:
                 st.session_state["evs_xai"] = nova
@@ -2454,7 +2454,7 @@ def atender_lote(lote):
         metodo = "POST" if r.get("method") == "POST" else "GET"
         caminho = str(r.get("path", ""))
         if not chave:
-            saida.append({"reqId": rid, "ok": False, "status": 401, "error": "Entre no app com a chave da xAI para usar a IA paga (clique em Sair e entre de novo)."})
+            saida.append({"reqId": rid, "ok": False, "status": 401, "error": "Entre no app com a chave do Grok para usar a IA paga (clique em Sair e entre de novo)."})
             continue
         permitido = caminho in XAI_POST if metodo == "POST" else (bool(XAI_GET.match(caminho)) and caminho not in XAI_POST)
         if not permitido:
@@ -2494,7 +2494,7 @@ def montar_ponte():
 
 # ---------- tutorial para leigos ----------
 GUIA_XAI = """
-**Sua chave do Grok Imagine (xAI)**: é ela que liga toda a IA do app (roteiros, calendário, chat, clipes, imagens e voz) · [abrir site](https://console.x.ai)
+**Sua chave do Grok**: é ela que liga toda a IA do app (roteiros, calendário, chat, clipes, imagens e voz) · [abrir site](https://console.x.ai)
 
 O site também é em inglês. Ao lado de cada botão está o que ele significa.
 
@@ -2516,12 +2516,12 @@ O site também é em inglês. Ao lado de cada botão está o que ele significa.
 **Parte 3: criar a chave**
 
 7. Clique em **Back** (voltar), no topo à esquerda, para sair das configurações.
-8. Clique aqui: 👉 **[🔑 Obter minha chave na xAI](https://console.x.ai/)** e, no menu da esquerda, clique em **API Keys** (chaves de API).
+8. Clique aqui: 👉 **[🔑 Obter minha chave do Grok](https://console.x.ai/)** e, no menu da esquerda, clique em **API Keys** (chaves de API).
    Se preferir pelo menu: no menu principal da esquerda, clique em **API Keys**.
 9. Clique em **Create API Key** (criar chave de API). Em **Name** (nome), escreva `appvideos`.
    Deixe as permissões como estão e clique em **Create** / **Save** (criar / salvar).
-10. A chave aparece começando com **xai-** ou **grok_** (depende da sua conta; as duas servem). Clique em **Copy** (copiar). Ela só aparece **uma vez**.
-11. Cole a chave no campo **Sua chave do Grok Imagine (xAI)**, na tela de entrada deste app, e clique em **Entrar no app**.
+10. A chave aparece começando com **grok_**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
+11. Cole a chave no campo **Sua chave do Grok**, na tela de entrada deste app, e clique em **Entrar no app**.
     Para trocar a chave depois: no estúdio, passo **8 · Gerar**, botão **Trocar chave**.
 
 **Atenção, para não confundir:**
@@ -2541,8 +2541,8 @@ O site da xAI é em inglês. Ao lado de cada botão está o que ele significa. *
 3. Se aparecer **Create team** (criar equipe), escreva qualquer nome (por exemplo, o nome do seu negócio) e confirme.
 4. No menu da esquerda, clique em **API Keys** (chaves de API).
 5. Clique em **Create API Key** (criar chave de API). Em **Name** (nome), escreva `appvideos` e clique em **Create** / **Save** (criar / salvar).
-6. A chave aparece começando com **xai-** ou **grok_** (depende da sua conta; as duas servem). Clique em **Copy** (copiar). Ela só aparece **uma vez**.
-7. Volte aqui, cole a chave no campo **Sua chave do Grok Imagine (xAI)** e clique em **Entrar no app**.
+6. A chave aparece começando com **grok_**. Clique em **Copy** (copiar). Ela só aparece **uma vez**.
+7. Volte aqui, cole a chave no campo **Sua chave do Grok** e clique em **Entrar no app**.
 
 ⚠️ **Management Keys** (chaves de gerenciamento) **não servem**. Use a chave de **API Keys**.
 """
@@ -2684,7 +2684,7 @@ com o modelo **Lite** em **480p**. Assim você vê o resultado gastando centavos
 **Como colocar voz no vídeo** (passo **Voz** do estúdio)
 
 - **Voz pronta:** uma voz do computador lê o roteiro. **Atenção:** ela toca só na prévia e **não vai para o arquivo baixado**.
-- **✨ Voz da IA** (recomendado, precisa da chave da xAI): voz natural em português do Brasil, com 26 opções.
+- **✨ Voz da IA** (recomendado, precisa da chave do Grok): voz natural em português do Brasil, com 26 opções.
   Clique em **Gerar narração com a voz da IA**. A voz **entra no arquivo baixado** e as cenas se ajustam ao tamanho da fala.
 - **Enviar áudio** (recomendado): grave a narração no celular, lendo o roteiro com calma, e envie o arquivo
   (mp3, m4a, wav). A duração do vídeo se ajusta ao áudio.
@@ -2767,17 +2767,17 @@ def tela_entrada():
         with st.form("entrar"):
             nome = st.text_input("Seu nome", placeholder="Como você quer ser chamado")
             st.markdown(
-                f"Ainda não tem a chave? 👉 **[Clique aqui para pegar a sua chave na xAI]({XAI_CHAVES_URL})** "
+                f"Ainda não tem a chave? 👉 **[Clique aqui para pegar a sua chave do Grok]({XAI_CHAVES_URL})** "
                 "(abre o site da xAI em outra aba: entre na sua conta, clique em **API Keys** no menu da esquerda, depois em **Create API Key**, copie e cole aqui embaixo)."
             )
             xai = st.text_input(
-                "Sua chave do Grok Imagine (xAI)",
+                "Sua chave do Grok",
                 type="password",
-                placeholder="xai-... ou grok_...",
+                placeholder="grok_...",
                 help="Crie em console.x.ai → API Keys (veja o passo a passo logo abaixo). Criar a conta e a chave é grátis.",
             )
             entrar = st.form_submit_button("Entrar no app", type="primary", use_container_width=True)
-        st.link_button("🔑 Obter minha chave na xAI", XAI_CHAVES_URL, use_container_width=True)
+        st.link_button("🔑 Obter minha chave do Grok", XAI_CHAVES_URL, use_container_width=True)
         st.caption("🔒 Sua chave vale só nesta sessão. Ela não fica salva no servidor e ninguém mais vê.")
         with st.expander("🔑 Primeira vez? Veja como conseguir a sua chave"):
             st.markdown(GUIA_ENTRADA)
@@ -2789,7 +2789,7 @@ def tela_entrada():
         elif not xai:
             st.error("Cole a sua chave do Grok Imagine (xAI). Clique em 🔑 Obter minha chave se ainda não tiver.")
         elif not xai_prefixo_ok(xai):
-            st.error("Essa não parece uma chave da xAI. Ela começa com xai- ou grok_. Copie a chave inteira.")
+            st.error("Essa não parece uma chave do Grok. Ela começa com grok_. Copie a chave inteira.")
         else:
             with st.spinner("Conferindo a sua chave com a xAI…"):
                 erro = xai_check(xai)
