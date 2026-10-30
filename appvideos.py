@@ -1545,8 +1545,38 @@ def galeria_banco(texto_negocio):
         c1.caption("Nenhuma foto escolhida — o app vai escolher automaticamente.")
 
 
+def novo_anuncio(prefixo):
+    """Limpa a tela para um novo anúncio. O vídeo anterior já está guardado em Meus vídeos."""
+    tinha_video = bool(st.session_state.get("ultimo_gratis" if prefixo == "g_" else "ultimo_pro"))
+    for k in list(st.session_state.keys()):
+        if k.startswith(prefixo) or (prefixo == "g_" and k.startswith("sel_")):
+            del st.session_state[k]
+    if prefixo == "g_":
+        st.session_state.ultimo_gratis = None
+        st.session_state.cenas = []
+        st.session_state.cta_gerado = ""
+        st.session_state.categoria_ia = ""
+        st.session_state.fotos_banco = []
+        st.session_state.audio_proprio = None
+    else:
+        st.session_state.ultimo_pro = None
+        st.session_state.pop("p_sugestao", None)
+    st.session_state.aviso_novo = ("✨ Tela limpa para um novo anúncio! " +
+                                   ("O vídeo anterior está guardado em 📁 Meus vídeos."
+                                    if tinha_video else ""))
+
+
+def mostrar_aviso_novo():
+    if st.session_state.get("aviso_novo"):
+        st.success(st.session_state.pop("aviso_novo"))
+
+
 def aba_gratis():
-    st.subheader("🎁 Criar vídeo grátis")
+    t1, t2 = st.columns([3, 1], vertical_alignment="center")
+    t1.subheader("🎁 Criar vídeo grátis")
+    t2.button("➕ Novo anúncio", key="novo_gratis_topo", on_click=novo_anuncio, args=("g_",),
+              help="Limpa a tela. Os vídeos já criados ficam guardados em Meus vídeos.")
+    mostrar_aviso_novo()
     st.caption("Roteiro por IA, imagens, narração, música e animações — sem gastar nada.")
 
     c1, c2 = st.columns(2)
@@ -1686,8 +1716,10 @@ def aba_gratis():
             st.error(f"Não foi possível criar o vídeo: {e}")
 
     if st.session_state.ultimo_gratis:
-        st.success("Seu vídeo está pronto!")
+        st.success("Seu vídeo está pronto! Ele já foi guardado em 📁 Meus vídeos.")
         st.video(st.session_state.ultimo_gratis["bytes"])
+        st.button("➕ Criar novo anúncio", key="novo_gratis_fim", type="primary",
+                  on_click=novo_anuncio, args=("g_",))
         b1, b2 = st.columns(2)
         b1.download_button("⬇️ Baixar vídeo (MP4)", st.session_state.ultimo_gratis["bytes"],
                            file_name=f"appvideo_{int(time.time())}.mp4", mime="video/mp4")
@@ -1758,7 +1790,12 @@ def conectar_xai():
 
 
 def aba_pago():
-    st.subheader("💎 Criar vídeos pagos")
+    t1, t2 = st.columns([3, 1], vertical_alignment="center")
+    t1.subheader("💎 Criar vídeos pagos")
+    if st.session_state.xai_key:
+        t2.button("➕ Novo anúncio", key="novo_pro_topo", on_click=novo_anuncio, args=("p_",),
+                  help="Limpa a tela. Os vídeos já criados ficam guardados em Meus vídeos.")
+    mostrar_aviso_novo()
     st.markdown(
         '<div class="nota"><b>Nota:</b> Este app cria vídeos gratuitos e serve de ponte para '
         "vídeos ultra profissionais. Você não precisa de assinaturas, basta criar seu vídeo e "
@@ -1879,9 +1916,11 @@ def aba_pago():
             st.error(str(e))
 
     if st.session_state.ultimo_pro:
-        st.success("Seu vídeo profissional está pronto!")
+        st.success("Seu vídeo profissional está pronto! Ele já foi guardado em 📁 Meus vídeos.")
         v = st.session_state.ultimo_pro
         st.video(v["bytes"] or v["url"])
+        st.button("➕ Criar novo anúncio", key="novo_pro_fim", type="primary",
+                  on_click=novo_anuncio, args=("p_",))
         if v["bytes"]:
             st.download_button("⬇️ Baixar vídeo (MP4)", v["bytes"],
                                file_name=f"appvideo_pro_{int(time.time())}.mp4", mime="video/mp4")
