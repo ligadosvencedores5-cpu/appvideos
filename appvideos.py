@@ -720,6 +720,10 @@ def banco_disponivel():
 OPENVERSE = "https://api.openverse.org/v1/images/"
 
 
+UA_BANCO = {"User-Agent": "Appvideo/1.0 (gerador de anuncios; contato via app) python-requests"}
+DIAG_BANCO = {}  # último resultado de cada fonte, para mostrar ao usuário se algo falhar
+
+
 def _openverse_resultados(busca):
     """Fotos livres para uso comercial, sem precisar de créditos (CC0 / domínio público).
     Não precisa de chave."""
@@ -732,20 +736,68 @@ def _openverse_resultados(busca):
     for params in tentativas:
         for _ in range(2):
             try:
-                r = requests.get(OPENVERSE, params=params, timeout=20,
-                                 headers={"User-Agent": "Appvideo/1.0 (gerador de anúncios)"})
-            except requests.RequestException:
+                r = requests.get(OPENVERSE, params=params, timeout=20, headers=UA_BANCO)
+            except requests.RequestException as e:
+                DIAG_BANCO["Openverse"] = f"sem conexão ({type(e).__name__})"
                 break
             if r.status_code == 429:
+                DIAG_BANCO["Openverse"] = "limite de pedidos (429)"
                 time.sleep(3)
                 continue
             if r.status_code == 200:
                 res = [x for x in r.json().get("results", []) if x.get("url")]
                 res = [x for x in res if (x.get("width") or 1200) >= 700]
                 if res:
+                    DIAG_BANCO["Openverse"] = f"ok ({len(res)} resultados)"
                     return res
+                DIAG_BANCO["Openverse"] = "nenhum resultado"
+            else:
+                DIAG_BANCO["Openverse"] = f"erro {r.status_code}"
             break
     return []
+
+
+def _wikimedia_resultados(busca):
+    """Fotos do acervo da Wikipédia (Wikimedia Commons), só as de domínio público/CC0.
+    Não precisa de chave."""
+    params = {"action": "query", "format": "json", "generator": "search",
+              "gsrsearch": f"filetype:bitmap {busca}", "gsrnamespace": 6, "gsrlimit": 40,
+              "prop": "imageinfo", "iiprop": "url|size|extmetadata", "iiurlwidth": 1600}
+    try:
+        r = requests.get("https://commons.wikimedia.org/w/api.php", params=params,
+                         timeout=20, headers=UA_BANCO)
+    except requests.RequestException as e:
+        DIAG_BANCO["Wikimedia"] = f"sem conexão ({type(e).__name__})"
+        return []
+    if r.status_code != 200:
+        DIAG_BANCO["Wikimedia"] = f"erro {r.status_code}"
+        return []
+    livres, outras = [], []
+    for pag in (r.json().get("query", {}).get("pages", {}) or {}).values():
+        info = (pag.get("imageinfo") or [{}])[0]
+        url = info.get("thumburl") or info.get("url")
+        if not url or (info.get("width") or 0) < 800 or url.lower().endswith((".svg", ".gif")):
+            continue
+        lic = str(((info.get("extmetadata") or {}).get("LicenseShortName") or {}).get("value", "")).lower()
+        item = {"url": url, "thumbnail": None}
+        if "public domain" in lic or "cc0" in lic or lic.startswith("pd"):
+            livres.append(item)
+        else:
+            outras.append(item)
+    DIAG_BANCO["Wikimedia"] = f"ok ({len(livres)} livres)" if livres else "nenhum resultado livre"
+    if not livres and len(busca.split()) > 2:
+        return _wikimedia_resultados(" ".join(busca.split()[:2]))
+    return livres
+
+
+def baixar_foto(url):
+    try:
+        r = requests.get(url, timeout=30, headers=UA_BANCO)
+        if r.status_code == 200 and len(r.content) > 5000:
+            return r.content
+    except requests.RequestException:
+        pass
+    return None
 
 
 def _salvar_foto(conteudo, destino, lado_max=1600):
@@ -768,14 +820,17 @@ def carregar_categoria(nome):
     prontas = _listar_imagens(local)
     if len(prontas) >= FOTOS_POR_CATEGORIA:
         return prontas
-    for n, item in enumerate(_openverse_resultados(busca)):
+    resultados = _openverse_resultados(busca)
+    if len(resultados) < FOTOS_POR_CATEGORIA:
+        resultados += _wikimedia_resultados(busca)
+    for n, item in enumerate(resultados):
         if len(prontas) >= FOTOS_POR_CATEGORIA:
             break
         destino = os.path.join(local, f"{n:02d}.jpg")
         if os.path.exists(destino):
             continue
         for url in (item.get("url"), item.get("thumbnail")):
-            conteudo = baixar_bytes(url) if url else None
+            conteudo = baixar_foto(url) if url else None
             try:
                 if conteudo and _salvar_foto(conteudo, destino):
                     break
@@ -871,8 +926,13 @@ def camada_texto_cena(W, H, tema, texto):
     return camada
 
 
-def fundo_cta(W, H, tema, produto, cta, contato):
+def fundo_cta(W, H, tema, produto, cta, contato, foto=None):
     fundo = arte_fundo(int(W * 1.15), int(H * 1.15), tema, 999)
+    if foto is not None:
+        # foto do anúncio desfocada atrás do cartão final, com a cor do tema por cima
+        borrada = ImageOps.fit(foto.convert("RGB"), fundo.size, Image.LANCZOS)
+        borrada = borrada.filter(ImageFilter.GaussianBlur(min(W, H) * 0.025))
+        fundo = Image.blend(borrada, fundo, 0.55)
     camada = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(camada)
     menor = min(W, H)
@@ -1087,7 +1147,9 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
                 except Exception:
                     pass
         if not caminhos:
-            st.info("O banco de imagens não está disponível agora; usei imagens de IA no lugar.")
+            detalhe = "; ".join(f"{k}: {v}" for k, v in DIAG_BANCO.items()) or "sem resposta"
+            st.warning("Não consegui buscar as fotos do banco de imagens agora, então tentei "
+                       f"imagens de IA no lugar. (Detalhe técnico — {detalhe})")
     progresso(25, "Preparando as imagens…")
     if opc["fonte_img"] in ("Imagens geradas por IA (grátis)", FONTE_VIDEO, FONTE_BANCO):
         faltam = [i for i in range(len(cenas)) if imagens[i] is None and videos[i] is None]
@@ -1152,7 +1214,9 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
                            texto=para_arrays(camada_texto_cena(W, H, tema, cena.get("texto_tela", ""))),
                            sombra=True, marca=True))
         inicio += duracoes[i] - T
-    fundo, cam_cta = fundo_cta(W, H, tema, opc["produto"], opc.get("cta", ""), opc.get("contato", ""))
+    foto_final = next((im for im in imagens if im is not None), None)
+    fundo, cam_cta = fundo_cta(W, H, tema, opc["produto"], opc.get("cta", ""),
+                               opc.get("contato", ""), foto_final)
     blocos.append(dict(base=fundo, video=None, fonte=None,
                        dur=duracoes[-1], inicio=inicio, zoom_in=True, pan=(0, 0),
                        texto=para_arrays(cam_cta), sombra=False, marca=False))
@@ -1573,7 +1637,17 @@ def aba_pago():
     st.markdown(
         '<div class="nota"><b>Nota:</b> Este app cria vídeos gratuitos e serve de ponte para '
         "vídeos ultra profissionais. Você não precisa de assinaturas, basta criar seu vídeo e "
-        "pagar poucos reais por ele.</div>", unsafe_allow_html=True)
+        "pagar poucos reais por ele.<br><br>"
+        "Graças ao grande volume de solicitações de vídeos profissionais em nosso estúdio, "
+        "conseguimos negociar condições cada vez melhores e reduzir os custos para nossos "
+        "usuários.<br><br>"
+        "E essa é apenas a tendência: à medida que crescemos e ampliamos nossa demanda, "
+        "buscamos tornar a criação de vídeos com inteligência artificial cada vez mais "
+        "acessível, com custos menores e mais vantagens para todos os nossos associados.<br><br>"
+        "Nosso compromisso é democratizar o acesso às melhores tecnologias de IA, oferecendo "
+        "cada vez mais recursos por preços acessíveis.<br><br>"
+        "<b>Crie um vídeo profissional e comprove você mesmo!</b></div>",
+        unsafe_allow_html=True)
 
     if not st.session_state.xai_key:
         conectar_xai()
