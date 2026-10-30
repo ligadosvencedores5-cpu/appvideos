@@ -1434,7 +1434,7 @@ st.markdown(
 for k, v in {"logado": False, "nome": "", "groq_key": "", "xai_key": "",
              "modelos_groq": MODELOS_GROQ_PREFERIDOS, "modelo_chat": MODELOS_GROQ_PREFERIDOS[0],
              "chat": [], "galeria": [], "cenas": [], "cta_gerado": "",
-             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None}.items():
+             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None, "rodada": 0}.items():
     st.session_state.setdefault(k, v)
 
 
@@ -1520,7 +1520,7 @@ def galeria_banco(texto_negocio):
     nomes = {p: f"{BANCO_CATEGORIAS[p][0]} ({len(banco_fotos()[p])})" for p in com_fotos}
     indice = com_fotos.index(sugestao) if sugestao in com_fotos else 0
     pasta = st.selectbox("Categoria", com_fotos, index=indice, format_func=lambda p: nomes[p],
-                         key=f"g_cat_banco_{sugestao}")
+                         key=f"g_cat_banco_{sugestao}_{st.session_state.rodada}")
     if sugestao == pasta:
         st.caption("✨ Sugestão para o seu tipo de negócio.")
     fotos = banco_fotos()[pasta]
@@ -1538,7 +1538,7 @@ def galeria_banco(texto_negocio):
     if sel:
         c1.success(f"✅ {len(sel)} foto(s) escolhida(s). Com 1 foto, ela fica no vídeo todo "
                    "com movimentos diferentes; com várias, cada cena usa uma.")
-        if c2.button("Limpar escolha", key="g_limpar_banco"):
+        if c2.button("Limpar escolha", key=f"g_limpar_banco_{st.session_state.rodada}"):
             st.session_state.fotos_banco = []
             st.rerun()
     else:
@@ -1548,6 +1548,8 @@ def galeria_banco(texto_negocio):
 def novo_anuncio(prefixo):
     """Limpa a tela para um novo anúncio. O vídeo anterior já está guardado em Meus vídeos."""
     tinha_video = bool(st.session_state.get("ultimo_gratis" if prefixo == "g_" else "ultimo_pro"))
+    # campos de envio de arquivo só esvaziam ganhando uma identidade nova
+    st.session_state.rodada = st.session_state.get("rodada", 0) + 1
     for k in list(st.session_state.keys()):
         if k.startswith(prefixo) or (prefixo == "g_" and k.startswith("sel_")):
             del st.session_state[k]
@@ -1581,20 +1583,20 @@ def aba_gratis():
 
     c1, c2 = st.columns(2)
     with c1:
-        produto = st.text_input("Produto / serviço / empresa *", key="g_prod",
+        produto = st.text_input("Produto / serviço / empresa *", key=f"g_prod_{st.session_state.rodada}",
                                 placeholder="Ex.: Hamburgueria Brasa Viva")
-        descricao = st.text_area("Detalhes do anúncio", key="g_desc", height=95,
+        descricao = st.text_area("Detalhes do anúncio", key=f"g_desc_{st.session_state.rodada}", height=95,
                                  placeholder="Ex.: hambúrguer artesanal, entrega em 30 min, combo com batata")
-        publico = st.text_input("Público-alvo", key="g_pub", placeholder="Ex.: jovens de 18 a 35 anos")
-        cta = st.text_input("Chamada final (CTA)", key="g_cta", placeholder="Ex.: Peça já pelo WhatsApp!")
-        contato = st.text_input("Contato no final do vídeo", key="g_contato",
+        publico = st.text_input("Público-alvo", key=f"g_pub_{st.session_state.rodada}", placeholder="Ex.: jovens de 18 a 35 anos")
+        cta = st.text_input("Chamada final (CTA)", key=f"g_cta_{st.session_state.rodada}", placeholder="Ex.: Peça já pelo WhatsApp!")
+        contato = st.text_input("Contato no final do vídeo", key=f"g_contato_{st.session_state.rodada}",
                                 placeholder="Ex.: (31) 99999-9999 · @brasaviva")
-        tom = st.selectbox("Tom do anúncio", TONS, key="g_tom")
+        tom = st.selectbox("Tom do anúncio", TONS, key=f"g_tom_{st.session_state.rodada}")
     with c2:
         formato = "Vertical 9:16 (Reels/TikTok/Shorts)"
         st.caption("📱 Formato: vertical 9:16 — Reels, TikTok, Shorts e Status.")
-        tema = st.selectbox("Tema visual", list(TEMAS), key="g_tema")
-        fonte_img = st.radio("Fundo das cenas", [FONTE_BANCO, "Só minhas fotos"], key="g_fonte",
+        tema = st.selectbox("Tema visual", list(TEMAS), key=f"g_tema_{st.session_state.rodada}")
+        fonte_img = st.radio("Fundo das cenas", [FONTE_BANCO, "Só minhas fotos"], key=f"g_fonte_{st.session_state.rodada}",
                              format_func=lambda o: "🖼️ Fotos do banco do app" if o == FONTE_BANCO
                              else "📷 Só as minhas fotos")
         categoria = "Automático"
@@ -1607,36 +1609,36 @@ def aba_gratis():
             st.caption("Suas fotos ficam em todas as cenas, com zoom e movimentos diferentes.")
         fotos_up = st.file_uploader("Suas fotos (produto, loja, logo…)",
                                     type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True,
-                                    key="g_fotos")
+                                    key=f"g_fotos_{st.session_state.rodada}")
         cc1, cc2 = st.columns(2)
-        n_cenas = cc1.slider("Cenas", 3, 6, 4, key="g_ncenas")
-        dur_min = cc2.slider("Segundos por cena", 2.5, 6.0, 3.5, 0.5, key="g_dur")
+        n_cenas = cc1.slider("Cenas", 3, 6, 4, key=f"g_ncenas_{st.session_state.rodada}")
+        dur_min = cc2.slider("Segundos por cena", 2.5, 6.0, 3.5, 0.5, key=f"g_dur_{st.session_state.rodada}")
         cc3, cc4 = st.columns(2)
-        musica = cc3.selectbox("Música", MUSICAS, key="g_musica")
-        narracao = cc4.toggle("Narração em português", value=True, key="g_narr")
+        musica = cc3.selectbox("Música", MUSICAS, key=f"g_musica_{st.session_state.rodada}")
+        narracao = cc4.toggle("Narração em português", value=True, key=f"g_narr_{st.session_state.rodada}")
         voz_nome, velocidade = list(VOZES)[0], "Normal"
         if narracao:
             cv1, cv2 = st.columns([2, 1])
-            voz_nome = cv1.selectbox("Voz do locutor", list(VOZES), key="g_voz")
-            velocidade = cv2.selectbox("Velocidade", list(VELOCIDADES), key="g_vel")
+            voz_nome = cv1.selectbox("Voz do locutor", list(VOZES), key=f"g_voz_{st.session_state.rodada}")
+            velocidade = cv2.selectbox("Velocidade", list(VELOCIDADES), key=f"g_vel_{st.session_state.rodada}")
             if VOZES[voz_nome] == "MINHA_VOZ":
                 st.caption("Grave você mesmo a narração do anúncio (de 10 a 40 segundos). "
                            "Dica: gere o roteiro primeiro e leia as falas da tabela.")
                 if hasattr(st, "audio_input"):
-                    gravado = st.audio_input("🎙️ Toque no microfone para gravar", key="g_gravar")
+                    gravado = st.audio_input("🎙️ Toque no microfone para gravar", key=f"g_gravar_{st.session_state.rodada}")
                     if gravado is not None:
                         st.session_state.audio_proprio = gravado.getvalue()
                 enviado = st.file_uploader("…ou envie um áudio (MP3, WAV, M4A, áudio do WhatsApp)",
                                            type=["mp3", "wav", "m4a", "ogg", "opus", "aac", "webm"],
-                                           key="g_audio_up")
+                                           key=f"g_audio_up_{st.session_state.rodada}")
                 if enviado is not None:
                     st.session_state.audio_proprio = enviado.getvalue()
                 if st.session_state.get("audio_proprio"):
                     st.success("✅ Sua voz está pronta para o vídeo.")
-                    if st.button("Apagar minha gravação", key="g_apagar_audio"):
+                    if st.button("Apagar minha gravação", key=f"g_apagar_audio_{st.session_state.rodada}"):
                         st.session_state.audio_proprio = None
                         st.rerun()
-            if VOZES[voz_nome] != "MINHA_VOZ" and st.button("🔊 Ouvir esta voz", key="g_ouvir"):
+            if VOZES[voz_nome] != "MINHA_VOZ" and st.button("🔊 Ouvir esta voz", key=f"g_ouvir_{st.session_state.rodada}"):
                 with st.spinner("Preparando a amostra…"):
                     amostra, motor = amostra_voz(VOZES[voz_nome], VELOCIDADES[velocidade])
                 if amostra:
@@ -1652,7 +1654,7 @@ def aba_gratis():
     if fonte_img == FONTE_BANCO:
         galeria_banco(f"{produto} {descricao}")
 
-    if st.button("📝 1. Gerar roteiro com IA", key="g_roteiro"):
+    if st.button("📝 1. Gerar roteiro com IA", key=f"g_roteiro_{st.session_state.rodada}"):
         if not produto.strip():
             st.warning("Informe o produto ou serviço.")
         else:
@@ -1667,7 +1669,7 @@ def aba_gratis():
     if st.session_state.cenas:
         st.markdown("**Roteiro** — edite à vontade antes de criar o vídeo:")
         editado = st.data_editor(
-            st.session_state.cenas, key="g_editor", num_rows="dynamic",
+            st.session_state.cenas, key=f"g_editor_{st.session_state.rodada}", num_rows="dynamic",
             column_config={
                 "texto_tela": st.column_config.TextColumn("Texto na tela", width="medium"),
                 "narracao": st.column_config.TextColumn("Narração", width="large"),
@@ -1677,11 +1679,11 @@ def aba_gratis():
         )
         cenas_finais = [dict(c) for c in editado if any(str(v or "").strip() for v in dict(c).values())]
         cta_final = st.text_input("CTA final do vídeo", value=cta or st.session_state.cta_gerado,
-                                  key="g_cta_final")
+                                  key=f"g_cta_final_{st.session_state.rodada}")
     else:
         cenas_finais, cta_final = [], cta
 
-    if st.button("🎬 2. Criar vídeo grátis", type="primary", key="g_criar"):
+    if st.button("🎬 2. Criar vídeo grátis", type="primary", key=f"g_criar_{st.session_state.rodada}"):
         if not produto.strip():
             st.warning("Informe o produto ou serviço.")
             return
@@ -1817,7 +1819,7 @@ def aba_pago():
 
     cx1, cx2 = st.columns([4, 1])
     cx1.success("Chave xAI conectada ✅")
-    if cx2.button("Trocar chave", key="p_trocar"):
+    if cx2.button("Trocar chave", key=f"p_trocar_{st.session_state.rodada}"):
         st.session_state.xai_key = ""
         st.rerun()
 
@@ -1825,45 +1827,45 @@ def aba_pago():
     with c1:
         st.markdown("**1. Apresentador**")
         modo = st.radio("Avatar", ["📷 Meu avatar (minha foto)", "🧑‍💼 Avatar pronto",
-                                   "🚫 Sem apresentador"], key="p_modo", label_visibility="collapsed")
+                                   "🚫 Sem apresentador"], key=f"p_modo_{st.session_state.rodada}", label_visibility="collapsed")
         foto, avatar = None, None
         if modo.startswith("📷"):
             foto = st.file_uploader("Sua foto (rosto de frente, boa luz)",
-                                    type=["png", "jpg", "jpeg", "webp"], key="p_foto")
+                                    type=["png", "jpg", "jpeg", "webp"], key=f"p_foto_{st.session_state.rodada}")
             if foto:
                 st.image(foto, width=170)
         elif modo.startswith("🧑"):
-            avatar = st.selectbox("Escolha o avatar", list(AVATARES), key="p_avatar")
-            custom = st.text_input("…ou descreva seu avatar", key="p_avatar_custom",
+            avatar = st.selectbox("Escolha o avatar", list(AVATARES), key=f"p_avatar_{st.session_state.rodada}")
+            custom = st.text_input("…ou descreva seu avatar", key=f"p_avatar_custom_{st.session_state.rodada}",
                                    placeholder="Ex.: senhora simpática de óculos, padaria ao fundo")
             if custom:
                 avatar = custom
         st.markdown("**2. Fala do apresentador**")
-        fala = st.text_area("Texto da fala (português)", key="p_fala", height=100,
+        fala = st.text_area("Texto da fala (português)", key=f"p_fala_{st.session_state.rodada}", height=100,
                             placeholder="Ex.: Olá! Aqui na Brasa Viva o hambúrguer é artesanal. Peça já!")
-        if st.button("✍️ Escrever fala com IA", key="p_fala_ia"):
+        if st.button("✍️ Escrever fala com IA", key=f"p_fala_ia_{st.session_state.rodada}"):
             with st.spinner("Escrevendo…"):
                 try:
                     st.session_state.p_sugestao = chat_groq([
                         {"role": "system", "content": "Escreva uma fala curta (máx. 35 palavras) "
                          "em português do Brasil para um apresentador de comercial, com chamada "
                          "final. Responda só com a fala."},
-                        {"role": "user", "content": f"Negócio: {st.session_state.get('p_prod') or 'meu negócio'}"}])
+                        {"role": "user", "content": f"Negócio: {st.session_state.get(f'p_prod_{st.session_state.rodada}') or 'meu negócio'}"}])
                 except Exception as e:
                     st.error(str(e))
         if st.session_state.get("p_sugestao"):
             st.info(st.session_state.p_sugestao)
     with c2:
         st.markdown("**3. Configurações**")
-        produto = st.text_input("Produto / empresa *", key="p_prod")
-        estilo = st.selectbox("Estilo", list(ESTILOS_PRO), key="p_estilo")
-        tom = st.selectbox("Tom", TONS, index=5, key="p_tom")
-        cenario = st.text_input("Cenário", key="p_cen", placeholder="Ex.: loja moderna, ao ar livre")
-        audio = st.selectbox("Áudio de fundo", list(AUDIO_PRO), key="p_audio")
-        prop = st.selectbox("Formato", list(PROPORCOES_PRO), key="p_prop")
-        resolucao = st.radio("Qualidade", ["720p", "480p"], horizontal=True, key="p_res")
-        duracao = st.slider("Duração (segundos)", 5, 15, 10, key="p_dur")
-        cta = st.text_input("Chamada final (CTA)", key="p_cta")
+        produto = st.text_input("Produto / empresa *", key=f"p_prod_{st.session_state.rodada}")
+        estilo = st.selectbox("Estilo", list(ESTILOS_PRO), key=f"p_estilo_{st.session_state.rodada}")
+        tom = st.selectbox("Tom", TONS, index=5, key=f"p_tom_{st.session_state.rodada}")
+        cenario = st.text_input("Cenário", key=f"p_cen_{st.session_state.rodada}", placeholder="Ex.: loja moderna, ao ar livre")
+        audio = st.selectbox("Áudio de fundo", list(AUDIO_PRO), key=f"p_audio_{st.session_state.rodada}")
+        prop = st.selectbox("Formato", list(PROPORCOES_PRO), key=f"p_prop_{st.session_state.rodada}")
+        resolucao = st.radio("Qualidade", ["720p", "480p"], horizontal=True, key=f"p_res_{st.session_state.rodada}")
+        duracao = st.slider("Duração (segundos)", 5, 15, 10, key=f"p_dur_{st.session_state.rodada}")
+        cta = st.text_input("Chamada final (CTA)", key=f"p_cta_{st.session_state.rodada}")
 
     confirmou = True
     if COBRANCA_ATIVA:
@@ -1873,9 +1875,9 @@ def aba_pago():
             st.link_button(f"💳 Pagar R$ {PRECO_VIDEO_PRO}", LINK_PAGAMENTO)
         if PIX_CHAVE:
             st.code(f"PIX: {PIX_CHAVE}", language=None)
-        confirmou = st.checkbox("Já realizei o pagamento", key="p_pago")
+        confirmou = st.checkbox("Já realizei o pagamento", key=f"p_pago_{st.session_state.rodada}")
 
-    if st.button("🚀 Criar vídeo profissional", type="primary", key="p_criar"):
+    if st.button("🚀 Criar vídeo profissional", type="primary", key=f"p_criar_{st.session_state.rodada}"):
         if not produto.strip():
             st.warning("Informe o produto / empresa.")
             return
