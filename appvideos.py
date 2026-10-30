@@ -90,6 +90,18 @@ except Exception:  # pragma: no cover
         except Exception:
             gTTS = None
 
+try:
+    import edge_tts  # vozes neurais grátis (Microsoft), sem chave
+except Exception:  # pragma: no cover
+    edge_tts = None
+    if _instalar("edge-tts"):
+        try:
+            import importlib
+            importlib.invalidate_caches()
+            import edge_tts
+        except Exception:
+            edge_tts = None
+
 # ============================================================================
 # >>>>>>>>>>  COLE SUAS CHAVES AQUI (dono do app)  <<<<<<<<<<
 # ============================================================================
@@ -883,12 +895,83 @@ def decodificar_audio(dados, acelerar=1.0):
     return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def narrar(texto):
-    if not gTTS or not texto.strip():
+VOZES = {
+    "👩 Francisca — feminina, calorosa": "pt-BR-FranciscaNeural",
+    "👨 Antônio — masculina, firme": "pt-BR-AntonioNeural",
+    "👩 Thalita — feminina, jovem": "pt-BR-ThalitaMultilingualNeural",
+    "🔈 Google — simples": None,
+    "🎙️ Minha própria voz (gravar ou enviar áudio)": "MINHA_VOZ",
+}
+VELOCIDADES = {"Normal": "+0%", "Rápida": "+10%", "Bem rápida": "+20%"}
+ESTADO_VOZ = {"reserva": False}  # avisa se precisou usar a voz reserva
+
+
+def _voz_google(texto, acelerar):
+    if not gTTS:
         return None
     buf = io.BytesIO()
     gTTS(texto, lang="pt", tld="com.br").write_to_fp(buf)
-    return decodificar_audio(buf.getvalue(), acelerar=1.12)
+    return decodificar_audio(buf.getvalue(), acelerar=acelerar)
+
+
+def narrar(texto, voz=None, velocidade="+0%"):
+    """Grava a fala. Usa a voz escolhida; se ela falhar, usa a voz do Google."""
+    if not texto or not texto.strip():
+        return None
+    if voz == "MINHA_VOZ":
+        voz = None
+    if voz and edge_tts is not None:
+        try:
+            dados = b"".join(parte["data"] for parte in
+                             edge_tts.Communicate(texto, voz, rate=velocidade).stream_sync()
+                             if parte.get("type") == "audio")
+            audio = decodificar_audio(dados) if dados else None
+            if audio is not None and len(audio) > SR // 4:
+                return audio
+        except Exception:
+            pass
+        ESTADO_VOZ["reserva"] = True
+    extra = {"+0%": 1.0, "+10%": 1.12, "+20%": 1.25}.get(velocidade, 1.12)
+    return _voz_google(texto, 1.12 if not voz else extra)
+
+
+def preparar_voz_propria(dados):
+    """Lê o áudio gravado/enviado (wav, mp3, m4a, ogg do WhatsApp…), corta os silêncios
+    do começo e do fim e deixa o volume no ponto certo."""
+    try:
+        audio = decodificar_audio(dados)
+    except Exception:
+        audio = None
+    if audio is None or len(audio) < SR // 2:
+        return None
+    # tira o chiado constante de fundo de leve e corta silêncio nas pontas
+    janela = SR // 50
+    energia = np.sqrt(np.convolve(audio ** 2, np.ones(janela) / janela, mode="same"))
+    limite = max(0.02, float(np.percentile(energia, 20)) * 3)
+    ativos = np.where(energia > limite)[0]
+    if len(ativos):
+        a, b = max(0, ativos[0] - SR // 10), min(len(audio), ativos[-1] + SR // 5)
+        audio = audio[a:b]
+    pico = float(np.abs(audio).max()) or 1.0
+    audio = audio / pico * 0.9
+    audio[:int(SR * 0.05)] *= np.linspace(0, 1, len(audio[:int(SR * 0.05)]))
+    return audio.astype(np.float32)
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def amostra_voz(voz, velocidade):
+    """Áudio curto para a pessoa ouvir a voz antes de criar o vídeo (WAV em bytes)."""
+    audio = narrar("Olá! Esta é a voz do seu anúncio. Fale com a gente e aproveite!",
+                   voz, velocidade)
+    if audio is None:
+        return None
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+    return buf.getvalue()
 
 
 def nota(midi):
@@ -994,18 +1077,29 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
 
     # 1) narração
     narracoes = [None] * (len(cenas) + 1)
-    if opc["narracao"]:
-        if gTTS is None:
-            st.warning("Narração indisponível (instale gTTS). O vídeo seguirá só com música.")
+    voz_propria = None
+    if opc["narracao"] and opc.get("audio_proprio"):
+        progresso(4, "Preparando a sua gravação…")
+        voz_propria = preparar_voz_propria(opc["audio_proprio"])
+        if voz_propria is None:
+            st.warning("Não consegui ler o seu áudio. Tente gravar de novo ou enviar outro arquivo. "
+                       "O vídeo seguirá só com música.")
+    elif opc["narracao"]:
+        if gTTS is None and edge_tts is None:
+            st.warning("Narração indisponível no momento. O vídeo seguirá só com música.")
         else:
             progresso(4, "Gravando a narração em português…")
             textos = [c.get("narracao", "") for c in cenas] + [opc.get("cta", "")]
+            voz, vel = opc.get("voz"), opc.get("velocidade", "+0%")
+            ESTADO_VOZ["reserva"] = False
             try:
                 with ThreadPoolExecutor(max_workers=4) as ex:
-                    narracoes = list(ex.map(lambda t: narrar(t) if t else None, textos))
+                    narracoes = list(ex.map(lambda t: narrar(t, voz, vel) if t else None, textos))
             except Exception as e:
                 st.warning(f"Não foi possível gerar a narração agora ({e}). Seguindo sem voz.")
                 narracoes = [None] * (len(cenas) + 1)
+            if voz and ESTADO_VOZ["reserva"]:
+                st.info("A voz escolhida não respondeu agora; usei a voz do Google no lugar.")
 
     # 2) durações
     duracoes = []
@@ -1013,6 +1107,11 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         minimo = opc["dur_min"] if i < len(cenas) else 3.6
         voz = narracoes[i]
         duracoes.append(max(minimo, (len(voz) / SR + 0.9) if voz is not None else 0))
+    if voz_propria is not None:
+        # divide o tempo da sua gravação entre as cenas (transição de 0,5 s entre elas)
+        n = len(cenas)
+        por_cena = max(opc["dur_min"], (len(voz_propria) / SR + 1.0 - 3.6) / n + 0.5)
+        duracoes = [por_cena] * n + [3.6]
 
     # 3) vídeos de fundo / imagens
     imagens = [None] * len(cenas)
@@ -1042,16 +1141,17 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         if not escolhidas:  # a pessoa não escolheu: o app escolhe pelo tipo de negócio
             escolhidas, _ = fotos_automaticas(f"{opc['produto']} {opc.get('descricao', '')}",
                                               len(cenas))
+        if not escolhidas:  # tipo de negócio sem fotos ainda: usa fotos variadas do banco
+            escolhidas = [(p, i) for p, lista in banco_fotos().items() for i in range(len(lista))]
+            random.shuffle(escolhidas)
+            escolhidas = escolhidas[:len(cenas)]
         livres = [i for i in range(len(cenas)) if imagens[i] is None]
         for n, i in enumerate(livres):
             if escolhidas:
                 p, k = escolhidas[n % len(escolhidas)]
                 imagens[i] = foto_do_banco(p, k)
-        if not escolhidas:
-            st.info("Ainda não temos fotos no banco para esse tipo de negócio. "
-                    "Usei imagens de IA no lugar.")
     progresso(25, "Preparando as imagens…")
-    if opc["fonte_img"] in ("Imagens geradas por IA (grátis)", FONTE_VIDEO, FONTE_BANCO):
+    if opc["fonte_img"] in ("Imagens geradas por IA (grátis)", FONTE_VIDEO):
         faltam = [i for i in range(len(cenas)) if imagens[i] is None and videos[i] is None]
         estilo = ESTILOS_IMG[opc["estilo_img"]]
 
@@ -1158,8 +1258,12 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
     progresso(35, "Compondo a trilha sonora…")
     n_amostras = int(total * SR) + SR // 2
     musica = sintetizar_musica(n_amostras / SR, opc["musica"])
-    tem_voz = any(v is not None for v in narracoes)
+    tem_voz = any(v is not None for v in narracoes) or voz_propria is not None
     mix = musica * (0.16 if tem_voz else 0.55)
+    if voz_propria is not None:
+        ini = int(0.3 * SR)
+        fim = min(len(mix), ini + len(voz_propria))
+        mix[ini:fim] += voz_propria[:fim - ini]
     for i, v in enumerate(narracoes):
         if v is None:
             continue
@@ -1291,7 +1395,7 @@ st.markdown(
 for k, v in {"logado": False, "nome": "", "groq_key": "", "xai_key": "",
              "modelos_groq": MODELOS_GROQ_PREFERIDOS, "modelo_chat": MODELOS_GROQ_PREFERIDOS[0],
              "chat": [], "galeria": [], "cenas": [], "cta_gerado": "",
-             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": ""}.items():
+             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None}.items():
     st.session_state.setdefault(k, v)
 
 
@@ -1421,25 +1525,18 @@ def aba_gratis():
         formato = "Vertical 9:16 (Reels/TikTok/Shorts)"
         st.caption("📱 Formato: vertical 9:16 — Reels, TikTok, Shorts e Status.")
         tema = st.selectbox("Tema visual", list(TEMAS), key="g_tema")
-        opcoes_fundo = ["Imagens geradas por IA (grátis)", "Só minhas fotos", "Fundos animados do tema"]
-        if chave_pexels():
-            opcoes_fundo.insert(0, FONTE_VIDEO)
-        opcoes_fundo.insert(0, FONTE_BANCO)
-        fonte_img = st.radio("Fundo das cenas", opcoes_fundo, key="g_fonte")
+        fonte_img = st.radio("Fundo das cenas", [FONTE_BANCO, "Só minhas fotos"], key="g_fonte",
+                             format_func=lambda o: "🖼️ Fotos do banco do app" if o == FONTE_BANCO
+                             else "📷 Só as minhas fotos")
         categoria = "Automático"
-        if fonte_img == FONTE_BANCO:
-            st.caption("Escolha as fotos de fundo na galeria logo abaixo. "
-                       "Se não escolher nenhuma, o app escolhe pelo seu tipo de negócio.")
-        if fonte_img == FONTE_VIDEO:
-            st.caption("Vídeos reais e grátis do banco Pexels, escolhidos para cada cena. "
-                       "Vídeos fornecidos por [Pexels](https://www.pexels.com).")
-        estilo_img = st.selectbox("Estilo das imagens de IA", list(ESTILOS_IMG), key="g_estilo",
-                                  disabled=fonte_img not in ("Imagens geradas por IA (grátis)", FONTE_VIDEO))
+        estilo_img = list(ESTILOS_IMG)[0]
         usar_xai = False
-        if st.session_state.xai_key and fonte_img in ("Imagens geradas por IA (grátis)", FONTE_VIDEO):
-            usar_xai = st.checkbox("Se o gerador grátis falhar, usar a Grok (custa centavos na xAI)",
-                                   value=True, key="g_usar_xai")
-        fotos_up = st.file_uploader("Suas fotos (produto, loja, logo…) — usadas primeiro",
+        if fonte_img == FONTE_BANCO:
+            st.caption("Escolha as fotos na galeria logo abaixo. Se você enviar fotos suas, elas "
+                       "entram primeiro e as outras cenas usam fotos do banco.")
+        else:
+            st.caption("Suas fotos ficam em todas as cenas, com zoom e movimentos diferentes.")
+        fotos_up = st.file_uploader("Suas fotos (produto, loja, logo…)",
                                     type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True,
                                     key="g_fotos")
         cc1, cc2 = st.columns(2)
@@ -1448,6 +1545,35 @@ def aba_gratis():
         cc3, cc4 = st.columns(2)
         musica = cc3.selectbox("Música", MUSICAS, key="g_musica")
         narracao = cc4.toggle("Narração em português", value=True, key="g_narr")
+        voz_nome, velocidade = list(VOZES)[0], "Normal"
+        if narracao:
+            cv1, cv2 = st.columns([2, 1])
+            voz_nome = cv1.selectbox("Voz do locutor", list(VOZES), key="g_voz")
+            velocidade = cv2.selectbox("Velocidade", list(VELOCIDADES), key="g_vel")
+            if VOZES[voz_nome] == "MINHA_VOZ":
+                st.caption("Grave você mesmo a narração do anúncio (de 10 a 40 segundos). "
+                           "Dica: gere o roteiro primeiro e leia as falas da tabela.")
+                if hasattr(st, "audio_input"):
+                    gravado = st.audio_input("🎙️ Toque no microfone para gravar", key="g_gravar")
+                    if gravado is not None:
+                        st.session_state.audio_proprio = gravado.getvalue()
+                enviado = st.file_uploader("…ou envie um áudio (MP3, WAV, M4A, áudio do WhatsApp)",
+                                           type=["mp3", "wav", "m4a", "ogg", "opus", "aac", "webm"],
+                                           key="g_audio_up")
+                if enviado is not None:
+                    st.session_state.audio_proprio = enviado.getvalue()
+                if st.session_state.get("audio_proprio"):
+                    st.success("✅ Sua voz está pronta para o vídeo.")
+                    if st.button("Apagar minha gravação", key="g_apagar_audio"):
+                        st.session_state.audio_proprio = None
+                        st.rerun()
+            elif st.button("🔊 Ouvir esta voz", key="g_ouvir"):
+                with st.spinner("Preparando a amostra…"):
+                    amostra = amostra_voz(VOZES[voz_nome], VELOCIDADES[velocidade])
+                if amostra:
+                    st.audio(amostra, format="audio/wav")
+                else:
+                    st.warning("Não consegui gerar a amostra agora. Tente de novo em instantes.")
 
     if fonte_img == FONTE_BANCO:
         galeria_banco(f"{produto} {descricao}")
@@ -1485,6 +1611,9 @@ def aba_gratis():
         if not produto.strip():
             st.warning("Informe o produto ou serviço.")
             return
+        if narracao and VOZES[voz_nome] == "MINHA_VOZ" and not st.session_state.get("audio_proprio"):
+            st.warning("Grave ou envie a sua narração, ou escolha outra voz.")
+            return
         if fonte_img == "Só minhas fotos" and not fotos_up:
             st.warning("Envie pelo menos uma foto ou escolha outra opção de imagens.")
             return
@@ -1500,7 +1629,10 @@ def aba_gratis():
                        tema=tema, estilo_img=estilo_img, fonte_img=fonte_img, musica=musica,
                        narracao=narracao, dur_min=dur_min, usar_xai=usar_xai,
                        categoria=categoria, descricao=descricao,
-                       fotos_banco=list(st.session_state.get("fotos_banco", [])))
+                       fotos_banco=list(st.session_state.get("fotos_banco", [])),
+                       voz=VOZES[voz_nome], velocidade=VELOCIDADES[velocidade],
+                       audio_proprio=(st.session_state.get("audio_proprio")
+                                      if VOZES[voz_nome] == "MINHA_VOZ" else None))
             dados = criar_video_gratis(cenas_finais, opc, fotos,
                                        lambda p, t: barra.progress(min(100, p), text=t))
             st.session_state.ultimo_gratis = {"bytes": dados, "titulo": produto.strip()}
@@ -1512,8 +1644,13 @@ def aba_gratis():
     if st.session_state.ultimo_gratis:
         st.success("Seu vídeo está pronto!")
         st.video(st.session_state.ultimo_gratis["bytes"])
-        st.download_button("⬇️ Baixar vídeo (MP4)", st.session_state.ultimo_gratis["bytes"],
+        b1, b2 = st.columns(2)
+        b1.download_button("⬇️ Baixar vídeo (MP4)", st.session_state.ultimo_gratis["bytes"],
                            file_name=f"appvideo_{int(time.time())}.mp4", mime="video/mp4")
+        if b2.button("🗑️ Apagar este vídeo", key="apagar_gratis"):
+            apagar_video(st.session_state.ultimo_gratis["bytes"])
+            st.session_state.ultimo_gratis = None
+            st.rerun()
 
 
 # ---------------- aba profissional ----------------
@@ -1706,15 +1843,36 @@ def aba_pago():
                                file_name=f"appvideo_pro_{int(time.time())}.mp4", mime="video/mp4")
         else:
             st.markdown(f"[⬇️ Abrir / baixar vídeo]({v['url']})")
+        if st.button("🗑️ Apagar este vídeo", key="apagar_pro"):
+            apagar_video(v["bytes"], v["url"])
+            st.session_state.ultimo_pro = None
+            st.rerun()
 
 
 # ---------------- outras abas ----------------
+def apagar_video(dados=None, url=None):
+    """Tira o vídeo da galeria e da tela (ele só existe nesta sessão)."""
+    st.session_state.galeria = [
+        g for g in st.session_state.galeria
+        if not ((dados is not None and g.get("bytes") is dados) or (url and g.get("url") == url))]
+    for chave in ("ultimo_gratis", "ultimo_pro"):
+        v = st.session_state.get(chave)
+        if v and ((dados is not None and v.get("bytes") is dados) or (url and v.get("url") == url)):
+            st.session_state[chave] = None
+
+
 def aba_galeria():
     st.subheader("📁 Meus vídeos")
     if not st.session_state.galeria:
         st.info("Os vídeos que você criar nesta sessão aparecem aqui.")
         return
-    st.caption("Os vídeos ficam aqui só enquanto a página estiver aberta — baixe os que quiser guardar.")
+    st.caption("Os vídeos ficam aqui só enquanto a página estiver aberta — baixe os que quiser "
+               "guardar. Para tirar um vídeo da lista, toque em 🗑️ Apagar.")
+    if len(st.session_state.galeria) > 1 and st.button("🗑️ Apagar todos", key="apagar_todos"):
+        st.session_state.galeria = []
+        st.session_state.ultimo_gratis = None
+        st.session_state.ultimo_pro = None
+        st.rerun()
     cols = st.columns(3)
     for i, item in enumerate(st.session_state.galeria):
         with cols[i % 3]:
@@ -1725,6 +1883,9 @@ def aba_galeria():
                                    mime="video/mp4", key=f"gal_{i}")
             elif item["url"]:
                 st.markdown(f"[⬇️ Baixar]({item['url']})")
+            if st.button("🗑️ Apagar", key=f"apagar_gal_{i}_{item['hora']}"):
+                apagar_video(item["bytes"], item["url"])
+                st.rerun()
 
 
 def aba_assistente():
@@ -1747,7 +1908,7 @@ def aba_assistente():
         "roteiro, cria imagens grátis, narração em português, música e animações; (2) Criar "
         "vídeos pagos — a pessoa conecta a chave xAI (console.x.ai, paga por uso, sem precisar "
         "de Premium) e usa a Grok Imagine com avatar da própria foto falando, até 15s em 720p. "
-        "O fundo das cenas pode ser o banco de imagens do app (10 categorias de negócio, escolhidas automaticamente), imagens de IA, fotos do usuário ou fundos animados. Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
+        "O fundo das cenas pode ser o banco de fotos do app (escolhidas na galeria por categoria de negócio) ou as fotos do próprio usuário. Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
     for m in st.session_state.chat:
         with st.chat_message(m["role"], avatar="🧑" if m["role"] == "user" else "🤖"):
             st.markdown(m["content"])
@@ -1780,7 +1941,7 @@ def aba_tutorial():
         st.markdown(
             "1. Abra **Criar vídeo grátis** e escreva o produto e os detalhes.\n"
             "2. Escolha o **formato** (9:16 para Reels/TikTok), o **tema visual** e o **fundo das "
-            "cenas**: o **banco de imagens do app** (fotos escolhidas pelo seu tipo de negócio), imagens de IA, suas fotos ou fundos animados.\n"
+            "cenas**: as **fotos do banco do app** (escolha na galeria) ou **só as suas fotos**.\n"
             "3. Envie fotos do seu produto ou loja, se tiver — elas entram primeiro.\n"
             "4. Clique em **Gerar roteiro com IA** e ajuste os textos na tabela.\n"
             "5. Escolha a música e se quer narração em português.\n"
@@ -1810,8 +1971,6 @@ def aba_tutorial():
         st.markdown(
             "- **Chave Groq inválida:** copie a chave inteira (gsk_…). Se perdeu, crie outra.\n"
             "- **Limite da Groq:** a chave grátis tem limite por minuto; espere um pouco.\n"
-            "- **Imagens de IA não vieram:** o serviço grátis às vezes demora; o app usa fundos "
-            "do tema no lugar. Tente de novo ou envie suas fotos.\n"
             "- **Chave xAI recusada:** confira se é chave de API (xai-…) e se há créditos.\n"
             "- **Vídeo profissional recusado:** a xAI bloqueia conteúdo impróprio, marcas de "
             "terceiros e pessoas famosas."
