@@ -566,7 +566,7 @@ class FonteVideo:
             self.proc = None
 
 
-def imagem_gratis_ia(prompt, W, H, semente):
+def imagem_gratis_ia(prompt, W, H, semente, prazo=None):
     """Imagem grátis via Pollinations. Tenta vários endereços. Retorna PIL ou None."""
     p = quote(prompt[:400])
     params = f"width={W}&height={H}&nologo=true&seed={semente}&model=flux"
@@ -574,16 +574,57 @@ def imagem_gratis_ia(prompt, W, H, semente):
         params += f"&key={POLLINATIONS_KEY}"
     urls = [
         f"https://gen.pollinations.ai/image/{p}?{params}",
-        f"https://pollinations.ai/p/{p}?{params}",
         f"https://image.pollinations.ai/prompt/{p}?{params}",
+        f"https://pollinations.ai/p/{p}?{params}",
     ]
-    for url in urls:
+    prazo = prazo or (time.time() + 90)
+    for tentativa in range(3):
+        limitado = False
+        for url in urls:
+            resta = prazo - time.time()
+            if resta < 5:
+                return None
+            try:
+                r = requests.get(url, timeout=min(45, resta), headers={"User-Agent": "Appvideo/1.0"})
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
+                    return Image.open(io.BytesIO(r.content)).convert("RGB")
+                if r.status_code == 429:
+                    limitado = True
+            except Exception:
+                pass
+        if not limitado:
+            break
+        espera = 6 + tentativa * 6  # o serviço grátis pediu para esperar
+        if prazo - time.time() < espera + 10:
+            return None
+        time.sleep(espera)
+    return None
+
+
+def foto_pexels(busca, W, H, usadas):
+    """Foto real grátis da Pexels (usa a chave Pexels do usuário). Retorna PIL ou None."""
+    chave = chave_pexels()
+    if not chave or not busca:
+        return None
+    orient = "portrait" if H > W * 1.1 else "landscape" if W > H * 1.1 else "square"
+    for consulta in (busca, " ".join(busca.split()[:2])):
         try:
-            r = requests.get(url, timeout=75, headers={"User-Agent": "Appvideo/1.0"})
-            if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
-                return Image.open(io.BytesIO(r.content)).convert("RGB")
+            r = requests.get("https://api.pexels.com/v1/search",
+                             params={"query": consulta, "orientation": orient, "per_page": 15},
+                             headers={"Authorization": chave}, timeout=20)
+            if r.status_code != 200:
+                continue
+            for foto in r.json().get("photos", []):
+                if foto.get("id") in usadas:
+                    continue
+                src = foto.get("src", {})
+                url = src.get("large2x") or src.get("large") or src.get("original")
+                dados = baixar_bytes(url) if url else None
+                if dados:
+                    usadas.add(foto.get("id"))
+                    return Image.open(io.BytesIO(dados)).convert("RGB")
         except Exception:
-            pass
+            continue
     return None
 
 
@@ -864,16 +905,24 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         faltam = [i for i in range(len(cenas)) if imagens[i] is None and videos[i] is None]
         estilo = ESTILOS_IMG[opc["estilo_img"]]
 
-        def buscar(i):
-            p = f"{cenas[i].get('imagem') or opc['produto']}, {estilo}, no text, no letters, no watermark"
-            return i, imagem_gratis_ia(p, W, H, 1000 + i * 17)
-
         if faltam:
-            progresso(15, f"Criando {len(faltam)} imagens com IA grátis (pode levar 1 minuto)…")
-            with ThreadPoolExecutor(max_workers=3) as ex:
-                for i, img in ex.map(buscar, faltam):
-                    imagens[i] = img
+            # uma imagem de cada vez: o gerador grátis recusa pedidos simultâneos
+            prazo_total = time.time() + 40 + 35 * len(faltam)
+            for n, i in enumerate(faltam):
+                if time.time() > prazo_total - 10:
+                    break
+                progresso(25 + int(10 * n / len(faltam)),
+                          f"Criando imagem {n + 1} de {len(faltam)} com IA grátis…")
+                p = f"{cenas[i].get('imagem') or opc['produto']}, {estilo}, no text, no letters, no watermark"
+                imagens[i] = imagem_gratis_ia(p, W, H, 1000 + i * 17, min(prazo_total, time.time() + 75))
             ainda = [i for i in faltam if imagens[i] is None]
+            if ainda and chave_pexels():
+                progresso(35, "Buscando fotos reais grátis para as cenas que faltaram…")
+                usadas = set()
+                for i in ainda:
+                    busca = cenas[i].get("busca_video") or cenas[i].get("imagem") or opc["produto"]
+                    imagens[i] = foto_pexels(" ".join(str(busca).split()[:5]), W, H, usadas)
+                ainda = [i for i in faltam if imagens[i] is None]
             if ainda and opc.get("usar_xai") and st.session_state.get("xai_key"):
                 progresso(24, "Gerando as imagens que faltaram com a Grok…")
                 for i in ainda:
@@ -885,9 +934,12 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
                     imagens[i] = fotos[j % len(fotos)]
                 ainda = []
             if ainda:
-                st.info(f"O gerador de imagens grátis não respondeu para {len(ainda)} de "
-                        f"{len(faltam)} cenas; usei fundos do tema no lugar. Dica: envie suas "
-                        "fotos do produto ou tente de novo em alguns minutos.")
+                dica = ("conecte sua chave Pexels grátis para usar fotos e vídeos reais, "
+                        "ou envie fotos do seu produto") if not chave_pexels() else \
+                       "envie fotos do seu produto ou tente de novo em alguns minutos"
+                st.info(f"O gerador de imagens grátis está sobrecarregado agora e não respondeu "
+                        f"para {len(ainda)} de {len(faltam)} cenas; usei fundos do tema no lugar. "
+                        f"Dica: {dica}.")
 
     # 4) cenas prontas
     progresso(30, "Montando as cenas…")
@@ -1098,8 +1150,10 @@ def tela_login():
             nome = st.text_input("Seu nome", placeholder="Ex.: Maria Silva")
             chave = st.text_input("1️⃣ Chave Groq (grátis) — para o roteiro e o assistente",
                                   type="password", placeholder="gsk_...")
+            st.markdown(f"👉 **[Pegar minha chave Groq grátis]({LINK_GROQ})**")
             chave_px = st.text_input("2️⃣ Chave Pexels (grátis) — para os vídeos reais de fundo",
                                      type="password", placeholder="cole aqui sua chave Pexels")
+            st.markdown(f"👉 **[Pegar minha chave Pexels grátis]({LINK_PEXELS})**")
             entrar = st.form_submit_button("Entrar no app", type="primary")
         st.caption("As duas chaves são grátis e não pedem cartão. Se você ainda não tem, "
                    "siga o passo a passo abaixo — leva uns 3 minutos.")
@@ -1186,7 +1240,7 @@ def aba_gratis():
         else:
             with st.expander("🎥 Quer vídeos reais no fundo? Conecte sua chave Pexels grátis"):
                 nova_px = st.text_input("Chave Pexels", type="password", key="g_px_nova")
-                st.markdown(f"[Criar chave Pexels grátis]({LINK_PEXELS})")
+                st.markdown(f"👉 **[Pegar minha chave Pexels grátis]({LINK_PEXELS})**")
                 if st.button("Conectar Pexels", key="g_px_btn"):
                     nova_px = limpar_chave(nova_px)
                     ok_px, msg_px = validar_pexels(nova_px) if nova_px else (False, "Cole a chave.")
@@ -1312,6 +1366,7 @@ def conectar_xai():
             "Ela é diferente da chave Groq: é paga por uso, direto na xAI.")
     with st.form("form_xai"):
         chave = st.text_input("Cole sua chave xAI", type="password", placeholder="xai-...")
+        st.markdown(f"👉 **[Pegar minha chave xAI]({LINK_XAI})**")
         ok_btn = st.form_submit_button("Conectar chave xAI", type="primary")
     with st.expander("🔑 Passo a passo: pegar a chave xAI e colar aqui", expanded=True):
         st.markdown(
