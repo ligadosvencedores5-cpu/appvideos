@@ -1488,7 +1488,7 @@ def tela_login():
             "3. Escolha formato, tema, imagens, narração e música.\n"
             "4. Clique em **Criar vídeo grátis** e baixe o MP4.\n\n"
             "Quer vídeo **ultra profissional** com seu avatar falando? Dentro do app, em "
-            "**Criar vídeos pagos**, você conecta sua chave xAI e usa a Grok Imagine."
+            "**Criar vídeos ultra profissionais**, você conecta sua chave xAI e usa a Grok Imagine."
         )
         st.caption("Suas chaves ficam só nesta sessão do navegador e não são salvas.")
 
@@ -1793,24 +1793,26 @@ def conectar_xai():
 
 def aba_pago():
     t1, t2 = st.columns([3, 1], vertical_alignment="center")
-    t1.subheader("💎 Criar vídeos pagos")
+    t1.subheader("💎 Criar vídeos ultra profissionais")
     if st.session_state.xai_key:
         t2.button("➕ Novo anúncio", key="novo_pro_topo", on_click=novo_anuncio, args=("p_",),
                   help="Limpa a tela. Os vídeos já criados ficam guardados em Meus vídeos.")
     mostrar_aviso_novo()
     st.markdown(
-        '<div class="nota"><b>Nota:</b> Este app cria vídeos gratuitos e serve de ponte para '
-        "vídeos ultra profissionais. Você não precisa de assinaturas, basta criar seu vídeo e "
-        "pagar poucos reais por ele.<br><br>"
-        "Graças ao grande volume de solicitações de vídeos profissionais em nosso estúdio, "
-        "conseguimos negociar condições cada vez melhores e reduzir os custos para nossos "
-        "usuários.<br><br>"
-        "E essa é apenas a tendência: à medida que crescemos e ampliamos nossa demanda, "
-        "buscamos tornar a criação de vídeos com inteligência artificial cada vez mais "
-        "acessível, com custos menores e mais vantagens para todos os nossos associados.<br><br>"
-        "Nosso compromisso é democratizar o acesso às melhores tecnologias de IA, oferecendo "
-        "cada vez mais recursos por preços acessíveis.<br><br>"
-        "<b>Crie um vídeo profissional e comprove você mesmo!</b></div>",
+        '<div class="nota"><b>Você está no lugar certo!</b><br><br>'
+        "Este aplicativo permite criar vídeos gratuitamente e ainda abre as portas para "
+        "produções com inteligência artificial de nível profissional.<br><br>"
+        "Sem assinaturas ou mensalidades. Você cria seu vídeo e, se desejar uma produção ainda "
+        "mais sofisticada, paga apenas alguns reais por ela.<br><br>"
+        "Graças ao crescente volume de solicitações de vídeos profissionais em nosso estúdio, "
+        "conseguimos negociar condições cada vez melhores com nossos parceiros, reduzindo os "
+        "custos para nossos usuários.<br><br>"
+        "E essa é apenas a tendência! À medida que ampliamos nossa demanda, trabalhamos para "
+        "tornar a produção de vídeos com inteligência artificial cada vez mais acessível, com "
+        "preços menores e mais vantagens para nossos associados.<br><br>"
+        "Nosso compromisso é democratizar o acesso às melhores tecnologias de IA, colocando "
+        "recursos cada vez mais avançados ao alcance de todos.<br><br>"
+        "<b>Crie seu vídeo e comprove você mesmo!</b></div>",
         unsafe_allow_html=True)
 
     if not st.session_state.xai_key:
@@ -1991,7 +1993,7 @@ def aba_assistente():
         f"chama {st.session_state.nome}. Responda em português do Brasil, de forma clara e "
         "prática. O app tem: (1) Criar vídeo grátis — usa a chave Groq grátis; a IA escreve o "
         "roteiro, cria imagens grátis, narração em português, música e animações; (2) Criar "
-        "vídeos pagos — a pessoa conecta a chave xAI (console.x.ai, paga por uso, sem precisar "
+        "vídeos ultra profissionais — a pessoa conecta a chave xAI (console.x.ai, paga por uso, sem precisar "
         "de Premium) e usa a Grok Imagine com avatar da própria foto falando, até 15s em 720p. "
         "O fundo das cenas pode ser o banco de fotos do app (escolhidas na galeria por categoria de negócio) ou as fotos do próprio usuário. Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
     for m in st.session_state.chat:
@@ -2039,7 +2041,7 @@ def aba_tutorial():
             "2. Em **Billing**, adicione créditos (a xAI cobra por segundo de vídeo).\n"
             "3. Em **API Keys → Create API Key**, libere todas as permissões e copie o valor "
             "(começa com **xai-**).\n"
-            "4. No Appvideo, abra **Criar vídeos pagos** e cole a chave.\n"
+            "4. No Appvideo, abra **Criar vídeos ultra profissionais** e cole a chave.\n"
             "5. Envie sua foto (ou escolha um avatar), escreva a fala e ajuste o estilo.\n"
             "6. Clique em **Criar vídeo profissional** e aguarde de 1 a 4 minutos."
         )
@@ -2070,7 +2072,7 @@ def app():
         for k in list(st.session_state.keys()):
             del st.session_state[k]
         st.rerun()
-    abas = st.tabs(["🎁 Criar vídeo grátis", "💎 Criar vídeos pagos", "📁 Meus vídeos",
+    abas = st.tabs(["🎁 Criar vídeo grátis", "💎 Criar vídeos ultra profissionais", "📁 Meus vídeos",
                     "🤖 Assistente IA", "📚 Tutorial"])
     with abas[0]:
         aba_gratis()
