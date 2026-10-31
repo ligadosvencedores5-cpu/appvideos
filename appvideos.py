@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Appvideo — Criador de vídeos de publicidade
+Studio de Criação de Vídeos — criador de vídeos de publicidade
 -------------------------------------------
 • Entrada com a chave GRÁTIS da Groq (console.groq.com/keys)
 • Vídeos grátis: roteiro por IA (Groq), imagens grátis, narração em português,
@@ -113,7 +113,7 @@ LINK_DE_PAGAMENTO = ""
 PRECO = "9,90"
 # ============================================================================
 
-NOME_APP = "Appvideo"
+NOME_APP = "Studio de Criação de Vídeos"
 GROQ_BASE = "https://api.groq.com/openai/v1"
 LINK_GROQ = "https://console.groq.com/keys"
 XAI_BASE = "https://api.x.ai/v1"
@@ -164,6 +164,17 @@ def erro_api(resp):
             msg = msg.get("message", msg)
     except Exception:
         msg = resp.text[:400]
+    texto = str(msg).lower()
+    if "credits" in texto or "spending limit" in texto:
+        return ("💳 Sua conta na xAI está sem créditos (ou chegou ao limite de gasto do mês). "
+                "Para continuar criando vídeos ultra profissionais: entre em console.x.ai → "
+                "Billing → adicione créditos (ex.: US$ 5) ou aumente o limite de gasto. "
+                "Não precisa trocar a chave. Os vídeos grátis continuam funcionando normalmente.")
+    if "rate limit" in texto or resp.status_code == 429:
+        return ("⏳ Muitos pedidos em pouco tempo. Espere 1 minuto e tente de novo.")
+    if "incorrect api key" in texto or resp.status_code == 401:
+        return ("🔑 A chave não foi aceita. Confira se copiou a chave inteira, sem espaços, "
+                "ou crie uma nova.")
     return f"Erro {resp.status_code}: {msg}"
 
 
@@ -636,7 +647,7 @@ def imagem_gratis_ia(prompt, W, H, semente, prazo=None):
             if resta < 5:
                 return None
             try:
-                r = requests.get(url, timeout=min(45, resta), headers={"User-Agent": "Appvideo/1.0"})
+                r = requests.get(url, timeout=min(45, resta), headers={"User-Agent": "StudioVideos/1.0"})
                 if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
                     return Image.open(io.BytesIO(r.content)).convert("RGB")
                 if r.status_code == 429:
@@ -1461,7 +1472,7 @@ def tela_login():
                 f"1. Toque aqui: **[abrir console.groq.com/keys]({LINK_GROQ})** (abre em outra aba).\n"
                 "2. Entre com sua conta **Google** ou com seu **e-mail**.\n"
                 "3. Toque no botão **Create API Key**.\n"
-                "4. Em *Display name*, escreva **Appvideo** e toque em **Submit**.\n"
+                "4. Em *Display name*, escreva **Studio** e toque em **Submit**.\n"
                 "5. Vai aparecer uma chave comprida que começa com **gsk_**. Toque em **Copy** "
                 "(ela só aparece uma vez — se fechar, crie outra).\n"
                 "6. Volte para esta aba e **cole no campo acima**."
@@ -1573,7 +1584,7 @@ body{background:transparent;color:var(--txt)}
 @media (max-width:620px){.selo{display:none}.meio{grid-template-columns:1fr}.tela{max-width:260px;margin:0 auto;width:100%}.lista{display:none}.ctrl{max-width:260px;margin:10px auto 0}}
 </style>
 <div class="est">
-  <div class="topo"><div class="marca"><i>▶</i>Estúdio Appvideo</div>
+  <div class="topo"><div class="marca"><i>▶</i>Studio de Criação de Vídeos</div>
     <div class="selo">Prévia rápida • o vídeo final terá narração e música</div></div>
   <div class="meio">
     <div>
@@ -1897,7 +1908,7 @@ def aba_gratis():
                   on_click=novo_anuncio, args=("g_",))
         b1, b2 = st.columns(2)
         b1.download_button("⬇️ Baixar vídeo (MP4)", st.session_state.ultimo_gratis["bytes"],
-                           file_name=f"appvideo_{int(time.time())}.mp4", mime="video/mp4")
+                           file_name=f"studio_video_{int(time.time())}.mp4", mime="video/mp4")
         if b2.button("🗑️ Apagar este vídeo", key="apagar_gratis"):
             apagar_video(st.session_state.ultimo_gratis["bytes"])
             st.session_state.ultimo_gratis = None
@@ -1945,11 +1956,11 @@ def conectar_xai():
         st.markdown(
             f"1. Toque aqui: **[abrir console.x.ai]({LINK_XAI})** (abre em outra aba).\n"
             "2. Entre com sua conta **X**, **Google** ou **e-mail**. Não precisa de Premium.\n"
-            "3. Se pedir, crie um **Team** (só escreva um nome, ex.: Appvideo).\n"
+            "3. Se pedir, crie um **Team** (só escreva um nome, ex.: Studio).\n"
             "4. No menu, abra **Billing** e adicione créditos com cartão (ex.: US$ 5). "
             "Sem saldo, a chave não gera vídeo.\n"
             "5. No menu, abra **API Keys** e toque em **Create API Key**.\n"
-            "6. Dê o nome **Appvideo**, deixe **todas as permissões liberadas** e confirme.\n"
+            "6. Dê o nome **Studio**, deixe **todas as permissões liberadas** e confirme.\n"
             "7. Copie a chave que começa com **xai-** (ela só aparece uma vez).\n"
             "8. Volte para esta aba, **cole no campo acima** e toque em **Conectar chave xAI**."
         )
@@ -2100,7 +2111,7 @@ def aba_pago():
                   on_click=novo_anuncio, args=("p_",))
         if v["bytes"]:
             st.download_button("⬇️ Baixar vídeo (MP4)", v["bytes"],
-                               file_name=f"appvideo_pro_{int(time.time())}.mp4", mime="video/mp4")
+                               file_name=f"studio_video_pro_{int(time.time())}.mp4", mime="video/mp4")
         else:
             st.markdown(f"[⬇️ Abrir / baixar vídeo]({v['url']})")
         if st.button("🗑️ Apagar este vídeo", key="apagar_pro"):
@@ -2139,7 +2150,7 @@ def aba_galeria():
             st.markdown(f"**{item['titulo']}** · {item['tipo']} · {item['hora']}")
             st.video(item["bytes"] or item["url"])
             if item["bytes"]:
-                st.download_button("⬇️ Baixar", item["bytes"], file_name=f"appvideo_{i}.mp4",
+                st.download_button("⬇️ Baixar", item["bytes"], file_name=f"studio_video_{i}.mp4",
                                    mime="video/mp4", key=f"gal_{i}")
             elif item["url"]:
                 st.markdown(f"[⬇️ Baixar]({item['url']})")
@@ -2193,9 +2204,9 @@ def aba_tutorial():
         st.markdown(
             f"1. Acesse **[console.groq.com/keys]({LINK_GROQ})**.\n"
             "2. Entre com sua conta Google ou e-mail. Não precisa de cartão.\n"
-            "3. Clique em **Create API Key**, dê um nome (ex.: Appvideo) e confirme.\n"
+            "3. Clique em **Create API Key**, dê um nome (ex.: Studio) e confirme.\n"
             "4. Copie a chave na hora (começa com **gsk_**). Ela aparece só uma vez.\n"
-            "5. Cole na tela de entrada do Appvideo junto com seu nome."
+            "5. Cole na tela de entrada do Studio junto com seu nome."
         )
     with st.expander("2. Criando um vídeo grátis"):
         st.markdown(
@@ -2214,7 +2225,7 @@ def aba_tutorial():
             "2. Em **Billing**, adicione créditos (a xAI cobra por segundo de vídeo).\n"
             "3. Em **API Keys → Create API Key**, libere todas as permissões e copie o valor "
             "(começa com **xai-**).\n"
-            "4. No Appvideo, abra **Criar vídeos ultra profissionais** e cole a chave.\n"
+            "4. No Studio, abra **Criar vídeos ultra profissionais** e cole a chave.\n"
             "5. Envie sua foto (ou escolha um avatar), escreva a fala e ajuste o estilo.\n"
             "6. Clique em **Criar vídeo profissional** e aguarde de 1 a 4 minutos."
         )
