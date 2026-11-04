@@ -2032,7 +2032,8 @@ def chave_fal():
 
 def custo_txt(segundos, preco):
     usd = segundos * preco
-    return f"≈ US$ {usd:.2f} (≈ R$ {usd * COTACAO_DOLAR:.2f})".replace(".", ",")
+    txt = f"≈ US$ {usd:.2f} (≈ R$ {usd * COTACAO_DOLAR:.2f})".replace(".", ",")
+    return txt.replace("$", "\\$")  # evita o Streamlit tratar $ como fórmula
 
 
 def erro_fal(e):
@@ -2042,9 +2043,12 @@ def erro_fal(e):
         return ("💳 Sua conta na fal.ai está sem saldo. Entre em fal.ai → Billing, adicione "
                 "créditos (ex.: US$ 5) e tente de novo. Não precisa trocar a chave.")
     if any(k in baixo for k in ("401", "403", "unauthorized", "authentication", "invalid key",
-                                 "no user found")):
-        return ("🔑 A fal.ai não aceitou a chave. Confira se copiou a chave inteira "
-                "(ela tem duas partes separadas por dois-pontos) ou crie uma nova.")
+                                 "no user found", "forbidden")):
+        return ("🔑 A fal.ai não aceitou a chave. Confira se copiou a **chave completa**, que "
+                "aparece só uma vez ao criar e tem duas partes separadas por dois-pontos — o "
+                "**Key ID** da lista não serve. Se não tiver a chave completa, apague essa chave "
+                "e crie uma nova, toque em **Trocar chave** aqui no app e cole de novo. "
+                f"(Detalhe da fal.ai: {texto[:200]})")
     if any(k in baixo for k in ("content", "safety", "policy", "nsfw", "moderation")):
         return ("🚫 O pedido foi bloqueado pelo filtro de segurança da IA. Evite marcas de "
                 "terceiros, pessoas famosas e conteúdo sensível, e tente de novo.")
@@ -2121,10 +2125,25 @@ def gerar_fal(modelo, argumentos, barra, limite=1200):
 
 
 def subir_fal(dados, tipo, nome):
+    """Envia o arquivo ao armazenamento da fal.ai. Se a chave não tiver permissão para o
+    armazenamento, manda o arquivo junto com o próprio pedido (data URI)."""
     try:
         return _fal().SyncClient(key=chave_fal()).upload(dados, tipo, nome)
+    except Exception:
+        return f"data:{tipo};base64," + base64.b64encode(dados).decode()
+
+
+def testar_fal(chave):
+    """Confere a chave. Só recusa quando a fal.ai diz que a chave não existe; falta de
+    permissão no armazenamento não impede (o app manda os arquivos junto com o pedido)."""
+    try:
+        _fal().SyncClient(key=chave, default_timeout=30).upload(b"ok", "text/plain", "teste.txt")
+        return True, ""
     except Exception as e:
-        raise RuntimeError(erro_fal(e))
+        bruto = str(e).lower()
+        if "no user found" in bruto or "invalid key" in bruto or "401" in bruto:
+            return False, erro_fal(e)
+        return True, ""
 
 
 def conectar_fal():
@@ -2141,18 +2160,28 @@ def conectar_fal():
             "**Google** ou **GitHub**.\n"
             "2. No painel, abra **Billing** e adicione créditos com cartão (ex.: US$ 5). "
             "Sem saldo, a chave não gera vídeo.\n"
-            f"3. Abra **[API Keys]({LINK_FAL})** e toque em **Add key** (ou *Create key*).\n"
-            "4. Dê o nome **Studio** e confirme.\n"
-            "5. Copie a chave inteira (ela aparece só uma vez).\n"
+            f"3. Abra **Developer → [API Keys]({LINK_FAL})** e toque em **Create key**.\n"
+            "4. Preencha: **Name:** Studio · **Description:** Chave do Studio (é só anotação) · "
+            "**Access:** API · **Expires:** sem validade.\n"
+            "5. Copie a **chave completa** assim que ela aparecer — tem **dois-pontos no meio**. "
+            "⚠️ O **Key ID** da lista não serve.\n"
             "6. Volte para esta aba, **cole no campo acima** e toque em **Conectar chave fal.ai**."
         )
     if ok_btn:
         chave = limpar_chave(chave)
-        if len(chave) < 20:
-            st.error("Essa chave parece incompleta. Copie a chave inteira da fal.ai.")
+        if ":" not in chave or len(chave) < 30:
+            st.error("Essa não é a chave completa. A chave da fal.ai tem **duas partes separadas "
+                     "por dois-pontos** (ex.: `abcd1234-…:ef567…`). O código da coluna "
+                     "**Key ID** não serve. A chave completa aparece só uma vez, logo depois de "
+                     "criar: se você não copiou, apague a chave na fal.ai e crie outra.")
         else:
-            st.session_state.fal_key = chave
-            st.rerun()
+            with st.spinner("Testando a chave na fal.ai…"):
+                ok, msg = testar_fal(chave)
+            if ok:
+                st.session_state.fal_key = chave
+                st.rerun()
+            else:
+                st.error(msg)
 
 
 def bloco_pagamento(prefixo):
@@ -2703,17 +2732,75 @@ def aba_tutorial():
             "6. Clique em **Criar vídeo grátis**. Leva de 1 a 3 minutos.\n"
             "7. Assista e clique em **Baixar vídeo (MP4)**."
         )
-    with st.expander("3. Vídeo profissional com seu avatar falando"):
+    with st.expander("3. Vídeos ultra profissionais: como criar a chave da fal.ai"):
         st.markdown(
+            "A fal.ai reúne vários geradores de vídeo (Google Veo, Kling, Seedance e o avatar "
+            "falante) numa chave só. Você paga apenas pelos segundos de vídeo que criar — "
+            "sem assinatura e sem mensalidade.\n\n"
+            "1. Acesse **[fal.ai](https://fal.ai)** e entre com sua conta **Google** ou **GitHub**.\n"
+            "2. No menu da esquerda, abra **Usage & Billing → Billing** (ou **Credits & Tiers**) "
+            "e adicione créditos com cartão (ex.: US$ 5). Sem saldo, o vídeo não é gerado.\n"
+            f"3. Abra **Developer → [API Keys]({LINK_FAL})** e clique em **Create key**.\n"
+            "4. Preencha:\n"
+            "   - **Name:** Studio\n"
+            "   - **Description:** Chave do Studio de Criação de Vídeos (é só uma anotação)\n"
+            "   - **Access / Scope:** API\n"
+            "   - **Expires:** sem validade (Never), para não parar de funcionar\n"
+            "5. Confirme. A **chave completa aparece uma única vez**: é um código comprido com "
+            "**dois-pontos no meio** (ex.: `abcd1234-…:ef567…`). Copie inteira na hora.\n"
+            "6. ⚠️ O código da coluna **Key ID** da lista **não é a chave** — ele não funciona. "
+            "Se não copiou a chave completa, apague e crie outra.\n"
+            "7. No Studio, abra **💎 Criar vídeos ultra profissionais**, deixe marcado "
+            "**🌐 Estúdio multi-IA**, cole a chave e toque em **Conectar chave fal.ai**. "
+            "O app testa a chave na hora e avisa se tiver algo errado."
+        )
+    with st.expander("4. Vídeos ultra profissionais: cena realista de anúncio"):
+        st.markdown(
+            "1. Em **O que você quer criar?**, escolha **🎬 Cena realista de anúncio**.\n"
+            "2. Escolha o **motor de IA**:\n"
+            "   - **Google Veo 3.1 Lite** — o mais barato, já com som (bom para começar).\n"
+            "   - **Google Veo 3.1 Fast** — mais rápido e caprichado.\n"
+            "   - **Google Veo 3.1** — qualidade de cinema (o mais caro).\n"
+            "   - **Kling v3** — vídeos de até 15 segundos, com som.\n"
+            "   - **Seedance 2.0** — dá vida a uma foto, até 15 segundos.\n"
+            "3. Escreva o **produto** e **o que deve acontecer no vídeo** "
+            "(ex.: *pizza saindo do forno a lenha, câmera se aproximando*).\n"
+            "4. Se quiser, escreva uma **fala** em português e a **chamada final**.\n"
+            "5. Escolha o **ponto de partida**: só texto (a IA cria tudo), **sua foto** "
+            "(produto, loja) ou uma **foto do banco do app** — a foto vira um vídeo realista.\n"
+            "6. Ajuste estilo, tom, duração e qualidade. O app mostra o **custo estimado** "
+            "antes de criar.\n"
+            "7. Toque em **✨ Escrever o roteiro da cena com IA** para um roteiro caprichado "
+            "(pode editar).\n"
+            "8. Toque em **🚀 Criar vídeo profissional** e aguarde de 1 a 5 minutos. O vídeo "
+            "fica guardado em **📁 Meus vídeos**."
+        )
+    with st.expander("5. Vídeos ultra profissionais: avatar falando (sua foto + voz)"):
+        st.markdown(
+            "1. Em **O que você quer criar?**, escolha **🗣️ Avatar falando (foto + voz)**.\n"
+            "2. Escolha o motor: **Kling AI Avatar Standard** (ótimo custo) ou **Pro** "
+            "(mais natural).\n"
+            "3. Envie **sua foto** — de frente, rosto bem iluminado, sem óculos escuros — ou "
+            "escolha uma pessoa do **banco do app**.\n"
+            "4. Escolha a **voz**: Francisca, Antônio, Thalita, Google, ou **🎙️ Minha própria "
+            "voz** (grave na hora ou envie um áudio, até do WhatsApp).\n"
+            "5. Escreva **o que o avatar vai falar** ou toque em **✍️ Escrever a fala com IA**. "
+            "O vídeo dura o mesmo tempo da fala (até 60 segundos).\n"
+            "6. Toque em **🚀 Criar avatar falando** e aguarde de 1 a 5 minutos."
+        )
+    with st.expander("6. Vídeos ultra profissionais com a Grok (xAI)"):
+        st.markdown(
+            "Outra opção, também paga por uso. Em **Escolha a plataforma de IA**, marque "
+            "**⚡ Grok Imagine (xAI)**.\n\n"
             f"1. Crie uma conta em **[console.x.ai]({LINK_XAI})** — não precisa de Premium.\n"
             "2. Em **Billing**, adicione créditos (a xAI cobra por segundo de vídeo).\n"
             "3. Em **API Keys → Create API Key**, libere todas as permissões e copie o valor "
             "(começa com **xai-**).\n"
-            "4. No Studio, abra **Criar vídeos ultra profissionais** e cole a chave.\n"
-            "5. Envie sua foto (ou escolha um avatar), escreva a fala e ajuste o estilo.\n"
-            "6. Clique em **Criar vídeo profissional** e aguarde de 1 a 4 minutos."
+            "4. Cole a chave no Studio, envie sua foto (ou escolha um avatar), escreva a fala "
+            "e ajuste o estilo.\n"
+            "5. Clique em **Criar vídeo profissional** e aguarde de 1 a 4 minutos."
         )
-    with st.expander("4. Dicas para vídeos que vendem"):
+    with st.expander("7. Dicas para vídeos que vendem"):
         st.markdown(
             "- Comece com um gancho forte na primeira cena.\n"
             "- Textos de tela curtos: até 7 palavras.\n"
@@ -2722,10 +2809,18 @@ def aba_tutorial():
             "- Vertical 9:16 funciona melhor em Reels, TikTok e Status.\n"
             "- Peça ideias ao **Assistente IA**."
         )
-    with st.expander("5. Problemas comuns"):
+    with st.expander("8. Problemas comuns"):
         st.markdown(
             "- **Chave Groq inválida:** copie a chave inteira (gsk_…). Se perdeu, crie outra.\n"
             "- **Limite da Groq:** a chave grátis tem limite por minuto; espere um pouco.\n"
+            "- **Chave fal.ai recusada:** você provavelmente copiou o **Key ID**. Crie uma chave "
+            "nova e copie a **chave completa** (com dois-pontos no meio) assim que ela aparecer.\n"
+            "- **fal.ai sem saldo:** adicione créditos em fal.ai → Billing. Não precisa trocar a "
+            "chave.\n"
+            "- **Vídeo bloqueado pela IA:** evite marcas de terceiros, pessoas famosas e "
+            "conteúdo sensível.\n"
+            "- **A página não abre ou aparece \"Failed to fetch\":** recarregue a página "
+            "(Ctrl + Shift + R) ou feche e abra o link de novo.\n"
             "- **Chave xAI recusada:** confira se é chave de API (xai-…) e se há créditos.\n"
             "- **Vídeo profissional recusado:** a xAI bloqueia conteúdo impróprio, marcas de "
             "terceiros e pessoas famosas."
