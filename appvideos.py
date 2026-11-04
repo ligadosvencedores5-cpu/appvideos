@@ -111,8 +111,6 @@ POLLINATIONS_CHAVE = ""
 # aqui, os usuários não precisam de chave e você cobra deles via PIX. Vazio = cada usuário
 # usa a própria chave. Crie em https://fal.ai/dashboard/keys
 FAL_CHAVE = ""
-# Chave da HeyGen (avatar falando). Vazio = cada usuário usa a própria chave.
-HEYGEN_CHAVE = ""
 # Cotação de referência do dólar, só para mostrar o custo estimado em reais
 COTACAO_DOLAR = 5.50
 # Cobrança dos vídeos profissionais (deixe vazio para não cobrar)
@@ -1453,7 +1451,7 @@ st.markdown(
 for k, v in {"logado": False, "nome": "", "groq_key": "", "xai_key": "",
              "modelos_groq": MODELOS_GROQ_PREFERIDOS, "modelo_chat": MODELOS_GROQ_PREFERIDOS[0],
              "chat": [], "galeria": [], "cenas": [], "cta_gerado": "",
-             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None, "rodada": 0, "fal_key": "", "heygen_key": ""}.items():
+             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None, "rodada": 0, "fal_key": ""}.items():
     st.session_state.setdefault(k, v)
 
 
@@ -2007,132 +2005,11 @@ MOTORES_CENA = {
         "resolucoes": ["720p", "480p"]},
 }
 MOTORES_AVATAR = {
-    "HeyGen Avatar — boca mais precisa e rosto nítido": {
-        "id": None, "plataforma": "heygen", "preco": 2.31 / 60},
-    "Kling AI Avatar v2 Standard — mais movimento, ótimo custo": {
-        "id": "fal-ai/kling-video/ai-avatar/v2/standard", "plataforma": "fal", "preco": 0.0562},
+    "Kling AI Avatar v2 Standard — ótimo custo": {
+        "id": "fal-ai/kling-video/ai-avatar/v2/standard", "preco": 0.0562},
     "Kling AI Avatar v2 Pro — máxima naturalidade": {
-        "id": "fal-ai/kling-video/ai-avatar/v2/pro", "plataforma": "fal", "preco": 0.115},
+        "id": "fal-ai/kling-video/ai-avatar/v2/pro", "preco": 0.115},
 }
-NOME_PLATAFORMA = {"fal": "fal.ai", "heygen": "HeyGen"}
-
-# ---------------- HeyGen (API v3, paga por uso) ----------------
-HEYGEN_BASE = "https://api.heygen.com"
-LINK_HEYGEN = "https://app.heygen.com"
-
-
-def chave_heygen():
-    return (st.session_state.get("heygen_key") or HEYGEN_CHAVE or config("HEYGEN_KEY")).strip()
-
-
-def erro_heygen(resp=None, texto=""):
-    if resp is not None:
-        try:
-            dados = resp.json()
-            erro = dados.get("error") or dados.get("message") or dados
-            if isinstance(erro, dict):
-                erro = erro.get("message") or erro
-            texto = str(erro)
-        except Exception:
-            texto = resp.text[:300]
-        texto = f"{resp.status_code}: {texto}"
-    baixo = texto.lower()
-    if any(k in baixo for k in ("credit", "quota", "balance", "insufficient", "payment")):
-        return ("💳 Sua conta na HeyGen está sem créditos de API. Entre na HeyGen, abra a área "
-                "de **API**, adicione créditos (a partir de US$ 5) e tente de novo. "
-                f"(Detalhe da HeyGen: {texto[:200]})")
-    if any(k in baixo for k in ("401", "unauthorized", "invalid api key", "authentication")):
-        return ("🔑 A HeyGen não aceitou a chave. Copie a chave de API inteira de novo, toque em "
-                f"**Trocar chave** e cole. (Detalhe da HeyGen: {texto[:200]})")
-    if any(k in baixo for k in ("face", "moderation", "policy", "nsfw")):
-        return ("🚫 A HeyGen recusou a foto ou o conteúdo. Use uma foto com **um único rosto, de "
-                f"frente e bem iluminado**. (Detalhe da HeyGen: {texto[:200]})")
-    return f"Não foi possível gerar o vídeo na HeyGen. (Detalhe: {texto[:300]})"
-
-
-def heygen_subir(dados, tipo, nome):
-    try:
-        r = requests.post(f"{HEYGEN_BASE}/v3/assets", headers={"x-api-key": chave_heygen()},
-                          files={"file": (nome, dados, tipo)}, timeout=120)
-    except requests.RequestException as e:
-        raise RuntimeError(erro_heygen(texto=str(e)))
-    if r.status_code not in (200, 201):
-        raise RuntimeError(erro_heygen(r))
-    aid = ((r.json() or {}).get("data") or {}).get("asset_id")
-    if not aid:
-        raise RuntimeError(erro_heygen(texto=f"envio sem asset_id: {r.text[:200]}"))
-    return aid
-
-
-def gerar_heygen(foto, audio_mp3, resolucao, barra, limite=1500):
-    """Foto + áudio → vídeo vertical com a pessoa falando (HeyGen). Devolve a URL do vídeo."""
-    barra.progress(5, text="Enviando a foto e a voz para a HeyGen…")
-    img_id = heygen_subir(foto, "image/jpeg", "avatar.jpg")
-    aud_id = heygen_subir(audio_mp3, "audio/mpeg", "fala.mp3")
-    corpo = {"type": "image", "image": {"type": "asset_id", "asset_id": img_id},
-             "audio_asset_id": aud_id, "aspect_ratio": "9:16", "resolution": resolucao,
-             "expressiveness": "medium", "title": "Studio de Criação de Vídeos",
-             "motion_prompt": "Speaks naturally to the camera with friendly expressions "
-                              "and subtle hand gestures."}
-    try:
-        r = requests.post(f"{HEYGEN_BASE}/v3/videos", json=corpo, timeout=60,
-                          headers={"x-api-key": chave_heygen(), "Content-Type": "application/json"})
-    except requests.RequestException as e:
-        raise RuntimeError(erro_heygen(texto=str(e)))
-    if r.status_code not in (200, 201, 202):
-        raise RuntimeError(erro_heygen(r))
-    vid = ((r.json() or {}).get("data") or {}).get("video_id")
-    if not vid:
-        raise RuntimeError(erro_heygen(texto=f"pedido sem video_id: {r.text[:200]}"))
-    inicio = time.time()
-    while time.time() - inicio < limite:
-        try:
-            r = requests.get(f"{HEYGEN_BASE}/v3/videos/{vid}", timeout=30,
-                             headers={"x-api-key": chave_heygen()})
-        except requests.RequestException:
-            time.sleep(5)
-            continue
-        if r.status_code != 200:
-            raise RuntimeError(erro_heygen(r))
-        dados = (r.json() or {}).get("data") or {}
-        status = str(dados.get("status", "")).lower()
-        seg = int(time.time() - inicio)
-        if status == "completed" and dados.get("video_url"):
-            barra.progress(100, text="Vídeo pronto!")
-            return dados["video_url"]
-        if status == "failed":
-            raise RuntimeError(erro_heygen(texto=str(dados.get("failure_message") or dados)))
-        barra.progress(min(95, 8 + seg // 3),
-                       text=("Na fila da HeyGen… " if status == "pending" else
-                             "A HeyGen está gerando seu avatar… ") + f"{seg}s")
-        time.sleep(5)
-    raise RuntimeError("A HeyGen demorou demais. Tente de novo em alguns minutos.")
-
-
-def conectar_heygen():
-    st.info("Para usar o avatar da HeyGen, conecte sua chave de API da HeyGen. Você paga só "
-            "pelos minutos de vídeo que criar — sem mensalidade.")
-    with st.form(f"form_heygen_{st.session_state.rodada}"):
-        chave = st.text_input("Cole sua chave de API da HeyGen", type="password")
-        st.markdown(f"👉 **[Abrir a HeyGen]({LINK_HEYGEN})**")
-        ok_btn = st.form_submit_button("Conectar chave HeyGen", type="primary")
-    with st.expander("🔑 Passo a passo: pegar a chave da HeyGen e colar aqui", expanded=True):
-        st.markdown(
-            f"1. Toque aqui: **[abrir a HeyGen]({LINK_HEYGEN})** e entre com sua conta "
-            "(Google ou e-mail).\n"
-            "2. Abra **Settings** (Configurações) e procure a área de **API**.\n"
-            "3. Adicione créditos de API (a partir de **US$ 5**, sem assinatura — os créditos "
-            "valem 12 meses).\n"
-            "4. Copie a sua **API Key / API Token**.\n"
-            "5. Volte para esta aba, **cole no campo acima** e toque em **Conectar chave HeyGen**."
-        )
-    if ok_btn:
-        chave = limpar_chave(chave)
-        if len(chave) < 20:
-            st.error("Essa chave parece incompleta. Copie a chave de API inteira da HeyGen.")
-        else:
-            st.session_state.heygen_key = chave
-            st.rerun()
 
 
 def _fal():
@@ -2489,21 +2366,6 @@ def aba_pro_avatar():
     with c1:
         motor_nome = st.selectbox("Motor de IA", list(MOTORES_AVATAR), key=f"p_amotor_{r}")
         motor = MOTORES_AVATAR[motor_nome]
-        plat = motor["plataforma"]
-        if plat == "heygen" and not chave_heygen():
-            conectar_heygen()
-            return
-        if plat == "fal" and not chave_fal():
-            conectar_fal()
-            return
-        if plat == "heygen" and st.session_state.get("heygen_key"):
-            h1, h2 = st.columns([3, 2])
-            h1.success("Chave HeyGen conectada ✅")
-            if h2.button("Trocar chave", key=f"p_htrocar_{r}"):
-                st.session_state.heygen_key = ""
-                st.rerun()
-        resolucao_av = (st.radio("Qualidade", ["720p", "1080p"], horizontal=True,
-                                 key=f"p_ares_{r}") if plat == "heygen" else None)
         produto = st.text_input("Produto / empresa *", key=f"p_aprod_{r}")
         foto, _ = escolher_foto_inicial("p_a", produto, "📷 Minha foto (rosto de frente)",
                                         permitir_texto=False)
@@ -2546,8 +2408,7 @@ def aba_pro_avatar():
                 st.warning(st.session_state.p_aerro)
         palavras = len(texto.split())
         seg_est = max(4.0, palavras / 2.6) if texto else 15.0
-        st.markdown(f"💰 **Custo estimado na sua conta {NOME_PLATAFORMA[plat]}:** "
-                    f"{custo_txt(seg_est, motor['preco'])}"
+        st.markdown(f"💰 **Custo estimado na sua conta fal.ai:** {custo_txt(seg_est, motor['preco'])}"
                     f" para cerca de {seg_est:.0f} s de fala")
         st.caption("O vídeo tem a mesma duração da fala. Formato vertical.")
 
@@ -2579,18 +2440,15 @@ def aba_pro_avatar():
                 raise RuntimeError("Não consegui preparar a voz. Tente de novo.")
             if len(audio) / SR > 60:
                 raise RuntimeError("A fala passou de 60 segundos. Encurte o texto ou a gravação.")
-            if plat == "heygen":
-                url = gerar_heygen(foto, audio_mp3_bytes(audio), resolucao_av, barra)
-            else:
-                barra.progress(5, text="Enviando a foto e a voz…")
-                img_url = subir_fal(foto, "image/jpeg", "avatar.jpg")
-                aud_url = subir_fal(audio_mp3_bytes(audio), "audio/mpeg", "fala.mp3")
-                url = gerar_fal(motor["id"], {"image_url": img_url, "audio_url": aud_url,
-                                              "prompt": "The person speaks naturally to the "
-                                                        "camera with friendly expressions and "
-                                                        "subtle gestures."}, barra)
+            barra.progress(5, text="Enviando a foto e a voz…")
+            img_url = subir_fal(foto, "image/jpeg", "avatar.jpg")
+            aud_url = subir_fal(audio_mp3_bytes(audio), "audio/mpeg", "fala.mp3")
+            url = gerar_fal(motor["id"], {"image_url": img_url, "audio_url": aud_url,
+                                          "prompt": "The person speaks naturally to the camera "
+                                                    "with friendly expressions and subtle gestures."},
+                            barra)
             st.session_state.ultimo_pro = {"url": url, "bytes": baixar_bytes(url)}
-            salvar_galeria(produto.strip(), f"Profissional · Avatar {motor_nome.split(' ')[0]}",
+            salvar_galeria(produto.strip(), "Profissional · Avatar falando",
                            dados=st.session_state.ultimo_pro["bytes"], url=url)
         except Exception as e:
             barra.empty()
@@ -2598,19 +2456,19 @@ def aba_pro_avatar():
 
 
 def aba_pro_fal():
+    if not chave_fal():
+        conectar_fal()
+        return
+    if st.session_state.get("fal_key"):
+        cx1, cx2 = st.columns([4, 1])
+        cx1.success("Chave fal.ai conectada ✅")
+        if cx2.button("Trocar chave", key=f"p_ftrocar_{st.session_state.rodada}"):
+            st.session_state.fal_key = ""
+            st.rerun()
     tipo = st.radio("O que você quer criar?",
                     ["🎬 Cena realista de anúncio", "🗣️ Avatar falando (foto + voz)"],
                     key=f"p_ftipo_{st.session_state.rodada}", horizontal=True)
     if tipo.startswith("🎬"):
-        if not chave_fal():
-            conectar_fal()
-            return
-        if st.session_state.get("fal_key"):
-            cx1, cx2 = st.columns([4, 1])
-            cx1.success("Chave fal.ai conectada ✅")
-            if cx2.button("Trocar chave", key=f"p_ftrocar_{st.session_state.rodada}"):
-                st.session_state.fal_key = ""
-                st.rerun()
         aba_pro_cena()
     else:
         aba_pro_avatar()
@@ -2749,7 +2607,7 @@ def aba_pago():
 
     plataforma = st.radio(
         "Escolha a plataforma de IA",
-        ["🌐 Estúdio multi-IA — Google Veo, Kling, Seedance, HeyGen e avatar falante",
+        ["🌐 Estúdio multi-IA — Google Veo, Kling, Seedance e avatar falante",
          "⚡ Grok Imagine (xAI)"],
         key=f"p_plataforma_{st.session_state.rodada}")
     st.caption("Todas cobram só pelo vídeo que você criar — sem assinatura, sem mensalidade.")
@@ -2920,13 +2778,8 @@ def aba_tutorial():
     with st.expander("5. Vídeos ultra profissionais: avatar falando (sua foto + voz)"):
         st.markdown(
             "1. Em **O que você quer criar?**, escolha **🗣️ Avatar falando (foto + voz)**.\n"
-            "2. Escolha o motor:\n"
-            "   - **HeyGen** — boca mais precisa e rosto mais nítido, ideal para o estilo "
-            "apresentador (usa a chave da HeyGen).\n"
-            "   - **Kling AI Avatar Standard** — mais movimento de cabeça e mãos, ótimo custo.\n"
-            "   - **Kling AI Avatar Pro** — o mais natural do Kling (Kling usa a chave da fal.ai).\n"
-            "   Na primeira vez, o app pede a chave da plataforma escolhida e mostra o passo a "
-            "passo para pegar.\n"
+            "2. Escolha o motor: **Kling AI Avatar Standard** (ótimo custo) ou **Pro** "
+            "(mais natural).\n"
             "3. Envie **sua foto** — de frente, rosto bem iluminado, sem óculos escuros — ou "
             "escolha uma pessoa do **banco do app**.\n"
             "4. Escolha a **voz**: Francisca, Antônio, Thalita, Google, ou **🎙️ Minha própria "
@@ -2964,10 +2817,6 @@ def aba_tutorial():
             "nova e copie a **chave completa** (com dois-pontos no meio) assim que ela aparecer.\n"
             "- **fal.ai sem saldo:** adicione créditos em fal.ai → Billing. Não precisa trocar a "
             "chave.\n"
-            "- **HeyGen sem créditos:** adicione créditos de API na HeyGen (a partir de US$ 5, "
-            "sem assinatura).\n"
-            "- **HeyGen recusou a foto:** use uma foto com um único rosto, de frente e bem "
-            "iluminado.\n"
             "- **Vídeo bloqueado pela IA:** evite marcas de terceiros, pessoas famosas e "
             "conteúdo sensível.\n"
             "- **A página não abre ou aparece \"Failed to fetch\":** recarregue a página "
