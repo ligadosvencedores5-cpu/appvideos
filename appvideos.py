@@ -173,7 +173,8 @@ def erro_api(resp):
     texto = str(msg).lower()
     if "credits" in texto or "spending limit" in texto:
         return ("💳 Sua conta na xAI está sem créditos (ou chegou ao limite de gasto do mês). "
-                "Para continuar criando vídeos ultra profissionais: entre em console.x.ai → "
+                "Para continuar criando vídeos ultra profissionais: toque em **💳 Comprar "
+                "créditos** ou entre em console.x.ai → "
                 "Billing → adicione créditos (ex.: US$ 5) ou aumente o limite de gasto. "
                 "Não precisa trocar a chave. Os vídeos grátis continuam funcionando normalmente.")
     if "rate limit" in texto or resp.status_code == 429:
@@ -1958,6 +1959,7 @@ def conectar_xai():
         chave = st.text_input("Cole sua chave xAI", type="password", placeholder="xai-...")
         st.markdown(f"👉 **[Pegar minha chave xAI]({LINK_XAI})**")
         ok_btn = st.form_submit_button("Conectar chave xAI", type="primary")
+    atalho_creditos("xai", "p_xcred_con")
     with st.expander("🔑 Passo a passo: pegar a chave xAI e colar aqui", expanded=True):
         st.markdown(
             f"1. Toque aqui: **[abrir console.x.ai]({LINK_XAI})** (abre em outra aba).\n"
@@ -1983,6 +1985,22 @@ def conectar_xai():
 
 # ---------------- fal.ai: vários motores de vídeo, pagos por uso ----------------
 LINK_FAL = "https://fal.ai/dashboard/keys"
+LINK_FAL_CREDITOS = "https://fal.ai/dashboard/billing"
+LINK_XAI_CREDITOS = "https://console.x.ai"
+
+
+def atalho_creditos(plataforma, chave_btn):
+    """Botão de atalho para comprar créditos na plataforma de IA."""
+    if plataforma == "fal":
+        st.link_button("💳 Comprar créditos (fal.ai)", LINK_FAL_CREDITOS,
+                       help="Abre a página de créditos da fal.ai. Sem mensalidade: "
+                            "você coloca o valor que quiser (ex.: US$ 5).")
+        st.caption("Na fal.ai: **Usage & Billing → Billing** → adicione créditos.")
+    else:
+        st.link_button("💳 Comprar créditos (xAI)", LINK_XAI_CREDITOS,
+                       help="Abre o console da xAI. Sem mensalidade: você coloca o valor que "
+                            "quiser (ex.: US$ 5).")
+        st.caption("No console da xAI: menu **Billing** → adicione créditos.")
 
 # Preços aproximados em US$ por segundo (levantados em set–out/2026; podem mudar)
 MOTORES_CENA = {
@@ -2040,7 +2058,8 @@ def erro_fal(e):
     texto = str(e)
     baixo = texto.lower()
     if any(k in baixo for k in ("balance", "credit", "insufficient", "locked", "payment")):
-        return ("💳 Sua conta na fal.ai está sem saldo. Entre em fal.ai → Billing, adicione "
+        return ("💳 Sua conta na fal.ai está sem saldo. Toque em **💳 Comprar créditos** "
+                f"([ou abra aqui]({LINK_FAL_CREDITOS})) e adicione "
                 "créditos (ex.: US$ 5) e tente de novo. Não precisa trocar a chave.")
     if any(k in baixo for k in ("401", "403", "unauthorized", "authentication", "invalid key",
                                  "no user found", "forbidden")):
@@ -2154,6 +2173,7 @@ def conectar_fal():
                               placeholder="xxxxxxxx-xxxx-…:xxxxxxxx")
         st.markdown(f"👉 **[Pegar minha chave fal.ai]({LINK_FAL})**")
         ok_btn = st.form_submit_button("Conectar chave fal.ai", type="primary")
+    atalho_creditos("fal", "p_fcred_con")
     with st.expander("🔑 Passo a passo: pegar a chave fal.ai e colar aqui", expanded=True):
         st.markdown(
             "1. Toque aqui: **[abrir fal.ai](https://fal.ai)** e entre com sua conta "
@@ -2460,9 +2480,11 @@ def aba_pro_fal():
         conectar_fal()
         return
     if st.session_state.get("fal_key"):
-        cx1, cx2 = st.columns([4, 1])
+        cx1, cx2, cx3 = st.columns([3, 2, 1.3], vertical_alignment="center")
         cx1.success("Chave fal.ai conectada ✅")
-        if cx2.button("Trocar chave", key=f"p_ftrocar_{st.session_state.rodada}"):
+        with cx2:
+            atalho_creditos("fal", "p_fcred")
+        if cx3.button("Trocar chave", key=f"p_ftrocar_{st.session_state.rodada}"):
             st.session_state.fal_key = ""
             st.rerun()
     tipo = st.radio("O que você quer criar?",
@@ -2480,9 +2502,11 @@ def aba_pro_grok():
         conectar_xai()
         return
 
-    cx1, cx2 = st.columns([4, 1])
+    cx1, cx2, cx3 = st.columns([3, 2, 1.3], vertical_alignment="center")
     cx1.success("Chave xAI conectada ✅")
-    if cx2.button("Trocar chave", key=f"p_trocar_{st.session_state.rodada}"):
+    with cx2:
+        atalho_creditos("xai", "p_xcred")
+    if cx3.button("Trocar chave", key=f"p_trocar_{st.session_state.rodada}"):
         st.session_state.xai_key = ""
         st.rerun()
 
