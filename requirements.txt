@@ -1,7 +1,8 @@
- streamlit
-   requests
-   pillow
-   numpy
-   imageio-ffmpeg
-   gTTS
-   edge-tts
+streamlit
+requests
+pillow
+numpy
+imageio-ffmpeg
+gTTS
+edge-tts
+fal-client
