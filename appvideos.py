@@ -107,6 +107,12 @@ except Exception:  # pragma: no cover
 # ============================================================================
 # Chave grátis opcional da Pollinations (imagens de IA mais estáveis): enter.pollinations.ai
 POLLINATIONS_CHAVE = ""
+# Chave da fal.ai (Google Veo, Kling, Seedance, avatar falante). Se você colar a SUA chave
+# aqui, os usuários não precisam de chave e você cobra deles via PIX. Vazio = cada usuário
+# usa a própria chave. Crie em https://fal.ai/dashboard/keys
+FAL_CHAVE = ""
+# Cotação de referência do dólar, só para mostrar o custo estimado em reais
+COTACAO_DOLAR = 5.50
 # Cobrança dos vídeos profissionais (deixe vazio para não cobrar)
 PIX = ""
 LINK_DE_PAGAMENTO = ""
@@ -1445,7 +1451,7 @@ st.markdown(
 for k, v in {"logado": False, "nome": "", "groq_key": "", "xai_key": "",
              "modelos_groq": MODELOS_GROQ_PREFERIDOS, "modelo_chat": MODELOS_GROQ_PREFERIDOS[0],
              "chat": [], "galeria": [], "cenas": [], "cta_gerado": "",
-             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None, "rodada": 0}.items():
+             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None, "rodada": 0, "fal_key": ""}.items():
     st.session_state.setdefault(k, v)
 
 
@@ -1975,30 +1981,472 @@ def conectar_xai():
             st.error(msg)
 
 
-def aba_pago():
-    t1, t2 = st.columns([3, 1], vertical_alignment="center")
-    t1.subheader("💎 Criar vídeos ultra profissionais")
-    if st.session_state.xai_key:
-        t2.button("➕ Novo anúncio", key="novo_pro_topo", on_click=novo_anuncio, args=("p_",),
-                  help="Limpa a tela. Os vídeos já criados ficam guardados em Meus vídeos.")
-    mostrar_aviso_novo()
-    st.markdown(
-        '<div class="nota"><b>Você está no lugar certo!</b><br><br>'
-        "Este aplicativo permite criar vídeos gratuitamente e ainda abre as portas para "
-        "produções com inteligência artificial de nível profissional.<br><br>"
-        "Sem assinaturas ou mensalidades. Você cria seu vídeo e, se desejar uma produção ainda "
-        "mais sofisticada, paga apenas alguns reais por ela.<br><br>"
-        "Graças ao crescente volume de solicitações de vídeos profissionais em nosso estúdio, "
-        "conseguimos negociar condições cada vez melhores com nossos parceiros, reduzindo os "
-        "custos para nossos usuários.<br><br>"
-        "E essa é apenas a tendência! À medida que ampliamos nossa demanda, trabalhamos para "
-        "tornar a produção de vídeos com inteligência artificial cada vez mais acessível, com "
-        "preços menores e mais vantagens para nossos associados.<br><br>"
-        "Nosso compromisso é democratizar o acesso às melhores tecnologias de IA, colocando "
-        "recursos cada vez mais avançados ao alcance de todos.<br><br>"
-        "<b>Crie seu vídeo e comprove você mesmo!</b></div>",
-        unsafe_allow_html=True)
+# ---------------- fal.ai: vários motores de vídeo, pagos por uso ----------------
+LINK_FAL = "https://fal.ai/dashboard/keys"
 
+# Preços aproximados em US$ por segundo (levantados em set–out/2026; podem mudar)
+MOTORES_CENA = {
+    "Google Veo 3.1 Lite — econômico, com som": {
+        "t2v": "fal-ai/veo3.1/lite", "i2v": "fal-ai/veo3.1/lite/image-to-video",
+        "familia": "veo", "preco": 0.05, "duracoes": [4, 6, 8], "resolucoes": ["720p", "1080p"]},
+    "Google Veo 3.1 Fast — rápido, com som": {
+        "t2v": "fal-ai/veo3.1/fast", "i2v": "fal-ai/veo3.1/fast/image-to-video",
+        "familia": "veo", "preco": 0.15, "duracoes": [4, 6, 8], "resolucoes": ["720p", "1080p"]},
+    "Google Veo 3.1 — qualidade de cinema, com som": {
+        "t2v": "fal-ai/veo3.1", "i2v": "fal-ai/veo3.1/image-to-video",
+        "familia": "veo", "preco": 0.40, "duracoes": [4, 6, 8], "resolucoes": ["720p", "1080p"]},
+    "Kling v3 — até 15 segundos, com som": {
+        "t2v": "fal-ai/kling-video/v3/standard/text-to-video",
+        "i2v": "fal-ai/kling-video/v3/standard/image-to-video",
+        "familia": "kling", "preco": 0.126, "duracoes": list(range(3, 16)), "resolucoes": []},
+    "Seedance 2.0 (ByteDance) — anima sua foto, até 15 s": {
+        "t2v": None, "i2v": "bytedance/seedance-2.0/image-to-video",
+        "familia": "seedance", "preco": 0.30, "duracoes": list(range(4, 16)),
+        "resolucoes": ["720p", "480p"]},
+}
+MOTORES_AVATAR = {
+    "Kling AI Avatar v2 Standard — ótimo custo": {
+        "id": "fal-ai/kling-video/ai-avatar/v2/standard", "preco": 0.0562},
+    "Kling AI Avatar v2 Pro — máxima naturalidade": {
+        "id": "fal-ai/kling-video/ai-avatar/v2/pro", "preco": 0.115},
+}
+
+
+def _fal():
+    """Importa o cliente oficial da fal.ai (instala na hora se faltar)."""
+    try:
+        import fal_client
+    except Exception:
+        if not _instalar("fal-client"):
+            raise RuntimeError("Não consegui instalar o fal-client. Adicione a linha "
+                               "fal-client ao requirements.txt e reinicie o app.")
+        import importlib
+        importlib.invalidate_caches()
+        import fal_client
+    return fal_client
+
+
+def chave_fal():
+    return (st.session_state.get("fal_key") or FAL_CHAVE or config("FAL_KEY")).strip()
+
+
+def custo_txt(segundos, preco):
+    usd = segundos * preco
+    return f"≈ US$ {usd:.2f} (≈ R$ {usd * COTACAO_DOLAR:.2f})".replace(".", ",")
+
+
+def erro_fal(e):
+    texto = str(e)
+    baixo = texto.lower()
+    if any(k in baixo for k in ("balance", "credit", "insufficient", "locked", "payment")):
+        return ("💳 Sua conta na fal.ai está sem saldo. Entre em fal.ai → Billing, adicione "
+                "créditos (ex.: US$ 5) e tente de novo. Não precisa trocar a chave.")
+    if any(k in baixo for k in ("401", "403", "unauthorized", "authentication", "invalid key",
+                                 "no user found")):
+        return ("🔑 A fal.ai não aceitou a chave. Confira se copiou a chave inteira "
+                "(ela tem duas partes separadas por dois-pontos) ou crie uma nova.")
+    if any(k in baixo for k in ("content", "safety", "policy", "nsfw", "moderation")):
+        return ("🚫 O pedido foi bloqueado pelo filtro de segurança da IA. Evite marcas de "
+                "terceiros, pessoas famosas e conteúdo sensível, e tente de novo.")
+    if "429" in baixo or "rate" in baixo:
+        return "⏳ Muitos pedidos em pouco tempo. Espere 1 minuto e tente de novo."
+    return f"Não foi possível gerar o vídeo: {texto[:400]}"
+
+
+def foto_vertical_bytes(origem):
+    """Recorta qualquer foto para vertical 9:16 (720x1280) em JPEG."""
+    img = origem if isinstance(origem, Image.Image) else Image.open(origem)
+    img = ImageOps.fit(ImageOps.exif_transpose(img).convert("RGB"), (720, 1280), Image.LANCZOS)
+    b = io.BytesIO()
+    img.save(b, "JPEG", quality=90)
+    return b.getvalue()
+
+
+def audio_mp3_bytes(audio):
+    """Converte o áudio (amostras) em MP3 para enviar à fal.ai."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+    proc = subprocess.run([FFMPEG, "-loglevel", "error", "-i", "pipe:0", "-ac", "1",
+                           "-b:a", "128k", "-f", "mp3", "pipe:1"],
+                          input=buf.getvalue(), capture_output=True, timeout=120)
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError("Não consegui preparar o áudio.")
+    return proc.stdout
+
+
+def gerar_fal(modelo, argumentos, barra, limite=1200):
+    """Envia para a fila da fal.ai, acompanha o progresso e devolve a URL do vídeo."""
+    fal = _fal()
+    cliente = fal.SyncClient(key=chave_fal(), default_timeout=120)
+    try:
+        pedido = cliente.submit(modelo, argumentos)
+    except Exception as e:
+        raise RuntimeError(erro_fal(e))
+    inicio = time.time()
+    while True:
+        try:
+            estado = pedido.status()
+        except Exception as e:
+            raise RuntimeError(erro_fal(e))
+        seg = int(time.time() - inicio)
+        if isinstance(estado, fal.Completed):
+            break
+        if isinstance(estado, fal.Queued):
+            pos = getattr(estado, "position", None)
+            barra.progress(min(20, 6 + seg // 4),
+                           text=f"Na fila da IA{f' (posição {pos})' if pos is not None else ''}… {seg}s")
+        else:
+            barra.progress(min(95, 20 + seg // 3), text=f"Gerando seu vídeo… {seg}s")
+        if seg > limite:
+            try:
+                pedido.cancel()
+            except Exception:
+                pass
+            raise RuntimeError("A IA demorou demais. Tente de novo em alguns minutos.")
+        time.sleep(4)
+    try:
+        resultado = pedido.get()
+    except Exception as e:
+        raise RuntimeError(erro_fal(e))
+    video = (resultado or {}).get("video") or {}
+    url = video.get("url") if isinstance(video, dict) else None
+    if not url:
+        raise RuntimeError(f"A IA terminou mas não devolveu o vídeo: {str(resultado)[:300]}")
+    barra.progress(100, text="Vídeo pronto!")
+    return url
+
+
+def subir_fal(dados, tipo, nome):
+    try:
+        return _fal().SyncClient(key=chave_fal()).upload(dados, tipo, nome)
+    except Exception as e:
+        raise RuntimeError(erro_fal(e))
+
+
+def conectar_fal():
+    st.info("Para usar Google Veo, Kling, Seedance e o avatar falante, conecte sua chave da "
+            "fal.ai. Você paga só pelos segundos de vídeo que criar — sem mensalidade.")
+    with st.form(f"form_fal_{st.session_state.rodada}"):
+        chave = st.text_input("Cole sua chave fal.ai", type="password",
+                              placeholder="xxxxxxxx-xxxx-…:xxxxxxxx")
+        st.markdown(f"👉 **[Pegar minha chave fal.ai]({LINK_FAL})**")
+        ok_btn = st.form_submit_button("Conectar chave fal.ai", type="primary")
+    with st.expander("🔑 Passo a passo: pegar a chave fal.ai e colar aqui", expanded=True):
+        st.markdown(
+            "1. Toque aqui: **[abrir fal.ai](https://fal.ai)** e entre com sua conta "
+            "**Google** ou **GitHub**.\n"
+            "2. No painel, abra **Billing** e adicione créditos com cartão (ex.: US$ 5). "
+            "Sem saldo, a chave não gera vídeo.\n"
+            f"3. Abra **[API Keys]({LINK_FAL})** e toque em **Add key** (ou *Create key*).\n"
+            "4. Dê o nome **Studio** e confirme.\n"
+            "5. Copie a chave inteira (ela aparece só uma vez).\n"
+            "6. Volte para esta aba, **cole no campo acima** e toque em **Conectar chave fal.ai**."
+        )
+    if ok_btn:
+        chave = limpar_chave(chave)
+        if len(chave) < 20:
+            st.error("Essa chave parece incompleta. Copie a chave inteira da fal.ai.")
+        else:
+            st.session_state.fal_key = chave
+            st.rerun()
+
+
+def bloco_pagamento(prefixo):
+    """Mostra o pagamento (se o dono ativou) e devolve True quando liberado."""
+    if not COBRANCA_ATIVA:
+        return True
+    st.markdown("---")
+    st.markdown(f"**Pagamento — R$ {PRECO_VIDEO_PRO}**")
+    if LINK_PAGAMENTO:
+        st.link_button(f"💳 Pagar R$ {PRECO_VIDEO_PRO}", LINK_PAGAMENTO)
+    if PIX_CHAVE:
+        st.code(f"PIX: {PIX_CHAVE}", language=None)
+    return st.checkbox("Já realizei o pagamento", key=f"{prefixo}pago_{st.session_state.rodada}")
+
+
+def escolher_foto_inicial(prefixo, texto_negocio, rotulo_minha, permitir_texto=True):
+    """Ponto de partida do vídeo: só texto, foto da pessoa ou foto do banco.
+    Devolve (bytes JPEG vertical ou None, descrição)."""
+    r = st.session_state.rodada
+    opcoes = (["✍️ Só texto (a IA cria tudo)"] if permitir_texto else []) + \
+             [rotulo_minha, "🖼️ Foto do banco do app"]
+    origem = st.radio("Ponto de partida", opcoes, key=f"{prefixo}origem_{r}", horizontal=True)
+    if origem == rotulo_minha:
+        foto = st.file_uploader("Envie a foto", type=["png", "jpg", "jpeg", "webp"],
+                                key=f"{prefixo}foto_ini_{r}")
+        if foto:
+            dados = foto_vertical_bytes(foto)
+            st.image(dados, width=150)
+            return dados, "minha"
+        return None, "minha"
+    if origem == "🖼️ Foto do banco do app":
+        com_fotos = [p for p in BANCO_CATEGORIAS if banco_fotos().get(p)]
+        if not com_fotos:
+            st.info("O banco de imagens está vazio.")
+            return None, "banco"
+        sug = adivinhar_categoria(texto_negocio)
+        pasta = st.selectbox("Categoria", com_fotos,
+                             index=com_fotos.index(sug) if sug in com_fotos else 0,
+                             format_func=lambda p: BANCO_CATEGORIAS[p][0],
+                             key=f"{prefixo}cat_{sug}_{r}")
+        chave_sel = f"{prefixo}banco_sel_{r}"
+        cols = st.columns(4)
+        for i in range(len(banco_fotos()[pasta])):
+            with cols[i % 4]:
+                st.image(miniatura(pasta, i), width=120)
+                if st.button("Usar esta", key=f"{prefixo}usar_{pasta}_{i}_{r}"):
+                    st.session_state[chave_sel] = (pasta, i)
+        sel = st.session_state.get(chave_sel)
+        if sel and sel[0] in banco_fotos() and sel[1] < len(banco_fotos()[sel[0]]):
+            st.success(f"✅ Foto escolhida: {BANCO_CATEGORIAS[sel[0]][0]} nº {sel[1] + 1}")
+            return foto_vertical_bytes(foto_do_banco(*sel)), "banco"
+        st.caption("Toque em **Usar esta** na foto que vai virar vídeo.")
+        return None, "banco"
+    return None, "texto"
+
+
+def melhorar_prompt(descricao, produto, estilo, tom, fala, cta, com_foto):
+    sistema = (
+        "Você é diretor de comerciais. Escreva UM prompt em inglês, num único parágrafo de no "
+        "máximo 110 palavras, para um gerador de vídeo com IA criar um anúncio VERTICAL 9:16. "
+        "Descreva a ação, o movimento de câmera, a luz e o som. "
+        + ("Uma foto será usada como primeiro quadro: descreva o movimento a partir dela, sem "
+           "mudar o produto. " if com_foto else "")
+        + "Se houver fala, escreva que uma voz em português do Brasil diz exatamente a frase "
+        "entre aspas. Não coloque marcas de terceiros. Responda só com o prompt.")
+    usuario = (f"Produto/empresa: {produto}\nO que deve acontecer: {descricao or '-'}\n"
+               f"Estilo: {estilo}\nTom: {tom}\nFala: {fala or '-'}\nChamada final: {cta or '-'}")
+    return chat_groq([{"role": "system", "content": sistema},
+                      {"role": "user", "content": usuario}], temperatura=0.7)
+
+
+def aba_pro_cena():
+    """Vídeo realista de anúncio: texto → vídeo ou foto → vídeo (Veo, Kling, Seedance)."""
+    r = st.session_state.rodada
+    c1, c2 = st.columns(2)
+    with c1:
+        motor_nome = st.selectbox("Motor de IA", list(MOTORES_CENA), key=f"p_motor_{r}")
+        motor = MOTORES_CENA[motor_nome]
+        produto = st.text_input("Produto / empresa *", key=f"p_fprod_{r}")
+        descricao = st.text_area("O que deve acontecer no vídeo", key=f"p_fdesc_{r}", height=90,
+                                 placeholder="Ex.: pizza saindo do forno a lenha, queijo "
+                                             "derretendo, câmera se aproximando devagar")
+        fala = st.text_input("Fala / narração (opcional, em português)", key=f"p_ffala_{r}",
+                             placeholder="Ex.: A melhor pizza da cidade. Peça já!")
+        cta = st.text_input("Chamada final (opcional)", key=f"p_fcta_{r}")
+    with c2:
+        foto_ini, origem = escolher_foto_inicial("p_f", f"{produto} {descricao}",
+                                                 "📷 Minha foto (produto, loja…)",
+                                                 permitir_texto=motor["t2v"] is not None)
+        if motor["t2v"] is None:
+            st.caption("Este motor anima uma foto: escolha sua foto ou uma do banco.")
+        estilo = st.selectbox("Estilo", list(ESTILOS_PRO), index=1, key=f"p_festilo_{r}")
+        tom = st.selectbox("Tom", TONS, index=5, key=f"p_ftom_{r}")
+        cc1, cc2 = st.columns(2)
+        dur = cc1.select_slider("Duração (s)", motor["duracoes"],
+                                value=8 if 8 in motor["duracoes"] else motor["duracoes"][-1],
+                                key=f"p_fdur_{motor['familia']}_{r}")
+        resolucao = (cc2.radio("Qualidade", motor["resolucoes"], key=f"p_fres_{motor['familia']}_{r}")
+                     if motor["resolucoes"] else None)
+        st.markdown(f"💰 **Custo estimado na sua conta fal.ai:** {custo_txt(dur, motor['preco'])}")
+        st.caption("📱 Formato: vertical 9:16. Preços aproximados; podem mudar na fal.ai.")
+
+    campo = f"p_fprompt_campo_{r}"
+
+    def _escrever():
+        if not produto.strip():
+            st.session_state.p_ferro = "Informe o produto / empresa."
+            return
+        try:
+            st.session_state[campo] = melhorar_prompt(descricao, produto, estilo, tom, fala,
+                                                      cta, foto_ini is not None)
+            st.session_state[f"{campo}_auto"] = None  # texto da IA: não sobrescrever
+            st.session_state.p_ferro = ""
+        except Exception as e:
+            st.session_state.p_ferro = str(e)
+
+    st.button("✨ Escrever o roteiro da cena com IA", key=f"p_fmelhorar_{r}", on_click=_escrever)
+    if st.session_state.get("p_ferro"):
+        st.warning(st.session_state.p_ferro)
+    padrao = (f"Vertical 9:16 advertising video for {produto or 'the business'}. "
+              f"{descricao or ''} Style: {ESTILOS_PRO[estilo]}. Mood: {tom}. "
+              + (f"A Brazilian Portuguese voice says: \"{fala}\". " if fala else "")
+              + (f"Ends with the message: '{cta}'. " if cta else "")
+              + "Ultra realistic, professional, smooth camera motion.")
+    # enquanto a pessoa não editar o roteiro à mão, ele acompanha o que ela preenche
+    auto = f"{campo}_auto"
+    if not st.session_state.get(campo) or st.session_state.get(campo) == st.session_state.get(auto):
+        st.session_state[campo] = padrao
+        st.session_state[auto] = padrao
+    prompt = st.text_area("Roteiro enviado à IA (pode editar)", height=110, key=campo)
+    st.caption("Mudou o produto, a descrição ou o estilo? Toque em ✨ para reescrever o roteiro.")
+
+    liberado = bloco_pagamento("p_f")
+    if st.button("🚀 Criar vídeo profissional", type="primary", key=f"p_fcriar_{r}"):
+        if not produto.strip():
+            st.warning("Informe o produto / empresa.")
+            return
+        if origem in ("minha", "banco") and foto_ini is None:
+            st.warning("Escolha a foto que vai virar vídeo.")
+            return
+        if motor["t2v"] is None and foto_ini is None:
+            st.warning("Este motor precisa de uma foto.")
+            return
+        if not liberado:
+            st.warning("Confirme o pagamento para gerar o vídeo profissional.")
+            return
+        barra = st.progress(2, text="Preparando…")
+        try:
+            args = {"prompt": prompt, "generate_audio": True}
+            img_url = None
+            if foto_ini is not None:
+                barra.progress(4, text="Enviando a foto…")
+                img_url = subir_fal(foto_ini, "image/jpeg", "foto.jpg")
+            fam = motor["familia"]
+            if fam == "veo":
+                args.update(duration=f"{dur}s", aspect_ratio="9:16", resolution=resolucao)
+                if img_url:
+                    args["image_url"] = img_url
+            elif fam == "kling":
+                args["duration"] = str(dur)
+                if img_url:
+                    args["start_image_url"] = img_url
+                else:
+                    args["aspect_ratio"] = "9:16"
+            else:  # seedance
+                args.update(image_url=img_url, duration=str(dur), aspect_ratio="9:16",
+                            resolution=resolucao)
+            modelo = motor["i2v"] if img_url else motor["t2v"]
+            url = gerar_fal(modelo, args, barra)
+            st.session_state.ultimo_pro = {"url": url, "bytes": baixar_bytes(url)}
+            salvar_galeria(produto.strip(), f"Profissional · {motor_nome.split(' —')[0]}",
+                           dados=st.session_state.ultimo_pro["bytes"], url=url)
+        except Exception as e:
+            barra.empty()
+            st.error(str(e))
+
+
+def aba_pro_avatar():
+    """Avatar falando: a foto da pessoa fala o texto (voz do app ou a própria voz)."""
+    r = st.session_state.rodada
+    c1, c2 = st.columns(2)
+    with c1:
+        motor_nome = st.selectbox("Motor de IA", list(MOTORES_AVATAR), key=f"p_amotor_{r}")
+        motor = MOTORES_AVATAR[motor_nome]
+        produto = st.text_input("Produto / empresa *", key=f"p_aprod_{r}")
+        foto, _ = escolher_foto_inicial("p_a", produto, "📷 Minha foto (rosto de frente)",
+                                        permitir_texto=False)
+        st.caption("Dica: foto de frente, rosto bem iluminado, sem óculos escuros.")
+    with c2:
+        voz_nome = st.selectbox("Voz", list(VOZES), key=f"p_avoz_{r}")
+        audio_bytes, texto = None, ""
+        if VOZES[voz_nome] == "MINHA_VOZ":
+            st.caption("Grave você mesmo o que o avatar vai falar (até 60 segundos).")
+            if hasattr(st, "audio_input"):
+                gravado = st.audio_input("🎙️ Toque no microfone para gravar", key=f"p_agravar_{r}")
+                if gravado is not None:
+                    audio_bytes = gravado.getvalue()
+            enviado = st.file_uploader("…ou envie um áudio (MP3, WAV, M4A, WhatsApp)",
+                                       type=["mp3", "wav", "m4a", "ogg", "opus", "aac", "webm"],
+                                       key=f"p_aaudio_{r}")
+            if enviado is not None:
+                audio_bytes = enviado.getvalue()
+        else:
+            velocidade = st.selectbox("Velocidade", list(VELOCIDADES), key=f"p_avel_{r}")
+            campo_txt = f"p_atexto_{r}"
+
+            def _escrever_fala():
+                try:
+                    st.session_state[campo_txt] = chat_groq([
+                        {"role": "system", "content": "Escreva uma fala curta (máx. 45 "
+                         "palavras) em português do Brasil para uma pessoa apresentar o "
+                         "negócio olhando para a câmera, com chamada final. Responda só "
+                         "com a fala."},
+                        {"role": "user", "content": f"Negócio: {produto or 'meu negócio'}"}])
+                    st.session_state.p_aerro = ""
+                except Exception as e:
+                    st.session_state.p_aerro = str(e)
+
+            texto = st.text_area("O que o avatar vai falar", key=campo_txt, height=110,
+                                 placeholder="Ex.: Oi! Aqui na Ótica Visão Clara você escolhe "
+                                             "seus óculos com atendimento especial. Venha!")
+            st.button("✍️ Escrever a fala com IA", key=f"p_aia_{r}", on_click=_escrever_fala)
+            if st.session_state.get("p_aerro"):
+                st.warning(st.session_state.p_aerro)
+        palavras = len(texto.split())
+        seg_est = max(4.0, palavras / 2.6) if texto else 15.0
+        st.markdown(f"💰 **Custo estimado na sua conta fal.ai:** {custo_txt(seg_est, motor['preco'])}"
+                    f" para cerca de {seg_est:.0f} s de fala")
+        st.caption("O vídeo tem a mesma duração da fala. Formato vertical.")
+
+    liberado = bloco_pagamento("p_a")
+    if st.button("🚀 Criar avatar falando", type="primary", key=f"p_acriar_{r}"):
+        if not produto.strip():
+            st.warning("Informe o produto / empresa.")
+            return
+        if foto is None:
+            st.warning("Escolha a foto do avatar.")
+            return
+        if VOZES[voz_nome] == "MINHA_VOZ" and not audio_bytes:
+            st.warning("Grave ou envie o áudio da fala.")
+            return
+        if VOZES[voz_nome] != "MINHA_VOZ" and not texto.strip():
+            st.warning("Escreva o que o avatar vai falar.")
+            return
+        if not liberado:
+            st.warning("Confirme o pagamento para gerar o vídeo profissional.")
+            return
+        barra = st.progress(2, text="Preparando a voz…")
+        try:
+            if audio_bytes:
+                audio = preparar_voz_propria(audio_bytes)
+            else:
+                ESTADO_VOZ["reserva"] = False
+                audio = narrar(texto, VOZES[voz_nome], VELOCIDADES[velocidade])
+            if audio is None:
+                raise RuntimeError("Não consegui preparar a voz. Tente de novo.")
+            if len(audio) / SR > 60:
+                raise RuntimeError("A fala passou de 60 segundos. Encurte o texto ou a gravação.")
+            barra.progress(5, text="Enviando a foto e a voz…")
+            img_url = subir_fal(foto, "image/jpeg", "avatar.jpg")
+            aud_url = subir_fal(audio_mp3_bytes(audio), "audio/mpeg", "fala.mp3")
+            url = gerar_fal(motor["id"], {"image_url": img_url, "audio_url": aud_url,
+                                          "prompt": "The person speaks naturally to the camera "
+                                                    "with friendly expressions and subtle gestures."},
+                            barra)
+            st.session_state.ultimo_pro = {"url": url, "bytes": baixar_bytes(url)}
+            salvar_galeria(produto.strip(), "Profissional · Avatar falando",
+                           dados=st.session_state.ultimo_pro["bytes"], url=url)
+        except Exception as e:
+            barra.empty()
+            st.error(str(e))
+
+
+def aba_pro_fal():
+    if not chave_fal():
+        conectar_fal()
+        return
+    if st.session_state.get("fal_key"):
+        cx1, cx2 = st.columns([4, 1])
+        cx1.success("Chave fal.ai conectada ✅")
+        if cx2.button("Trocar chave", key=f"p_ftrocar_{st.session_state.rodada}"):
+            st.session_state.fal_key = ""
+            st.rerun()
+    tipo = st.radio("O que você quer criar?",
+                    ["🎬 Cena realista de anúncio", "🗣️ Avatar falando (foto + voz)"],
+                    key=f"p_ftipo_{st.session_state.rodada}", horizontal=True)
+    if tipo.startswith("🎬"):
+        aba_pro_cena()
+    else:
+        aba_pro_avatar()
+
+
+def aba_pro_grok():
+    """Vídeos ultra profissionais com a Grok Imagine (xAI) — como antes."""
     if not st.session_state.xai_key:
         conectar_xai()
         return
@@ -2102,6 +2550,42 @@ def aba_pago():
         except Exception as e:
             barra.empty()
             st.error(str(e))
+
+
+
+def aba_pago():
+    t1, t2 = st.columns([3, 1], vertical_alignment="center")
+    t1.subheader("💎 Criar vídeos ultra profissionais")
+    t2.button("➕ Novo anúncio", key="novo_pro_topo", on_click=novo_anuncio, args=("p_",),
+              help="Limpa a tela. Os vídeos já criados ficam guardados em Meus vídeos.")
+    mostrar_aviso_novo()
+    st.markdown(
+        '<div class="nota"><b>Você está no lugar certo!</b><br><br>'
+        "Este aplicativo permite criar vídeos gratuitamente e ainda abre as portas para "
+        "produções com inteligência artificial de nível profissional.<br><br>"
+        "Sem assinaturas ou mensalidades. Você cria seu vídeo e, se desejar uma produção ainda "
+        "mais sofisticada, paga apenas alguns reais por ela.<br><br>"
+        "Graças ao crescente volume de solicitações de vídeos profissionais em nosso estúdio, "
+        "conseguimos negociar condições cada vez melhores com nossos parceiros, reduzindo os "
+        "custos para nossos usuários.<br><br>"
+        "E essa é apenas a tendência! À medida que ampliamos nossa demanda, trabalhamos para "
+        "tornar a produção de vídeos com inteligência artificial cada vez mais acessível, com "
+        "preços menores e mais vantagens para nossos associados.<br><br>"
+        "Nosso compromisso é democratizar o acesso às melhores tecnologias de IA, colocando "
+        "recursos cada vez mais avançados ao alcance de todos.<br><br>"
+        "<b>Crie seu vídeo e comprove você mesmo!</b></div>",
+        unsafe_allow_html=True)
+
+    plataforma = st.radio(
+        "Escolha a plataforma de IA",
+        ["🌐 Estúdio multi-IA — Google Veo, Kling, Seedance e avatar falante",
+         "⚡ Grok Imagine (xAI)"],
+        key=f"p_plataforma_{st.session_state.rodada}")
+    st.caption("Todas cobram só pelo vídeo que você criar — sem assinatura, sem mensalidade.")
+    if plataforma.startswith("🌐"):
+        aba_pro_fal()
+    else:
+        aba_pro_grok()
 
     if st.session_state.ultimo_pro:
         st.success("Seu vídeo profissional está pronto! Ele já foi guardado em 📁 Meus vídeos.")
