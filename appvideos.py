@@ -5,8 +5,8 @@ Studio de Criação de Vídeos — criador de vídeos de publicidade
 • Entrada com a chave GRÁTIS da Groq (console.groq.com/keys)
 • Vídeos grátis: roteiro por IA (Groq), imagens grátis, narração em português,
   música e animações montadas pelo próprio app — sem gastar nada.
-• Vídeos profissionais: dentro do app a pessoa conecta a chave xAI e usa a
-  Grok Imagine (avatar com a própria foto falando, vídeo realista, 720p).
+• Vídeos ultra profissionais: dentro do app a pessoa conecta a chave da fal.ai e usa
+  Google Veo, Kling, Seedance e o avatar falante (vídeo realista, foto falando).
 
 Como rodar:
     pip install streamlit requests pillow numpy imageio-ffmpeg gTTS
@@ -2118,8 +2118,9 @@ def tela_login():
             "2. Descreva seu produto — a IA escreve o roteiro.\n"
             "3. Escolha formato, tema, imagens, narração e música.\n"
             "4. Clique em **Criar vídeo grátis** e baixe o MP4.\n\n"
-            "Quer vídeo **ultra profissional** com seu avatar falando? Dentro do app, em "
-            "**Criar vídeos ultra profissionais**, você conecta sua chave xAI e usa a Grok Imagine."
+            "Quer vídeo **ultra profissional**, com cenas realistas ou seu avatar falando? Dentro "
+            "do app, em **Criar vídeos ultra profissionais**, você usa as melhores IAs de vídeo "
+            "pagando só pelo que criar."
         )
         st.caption("Suas chaves ficam só nesta sessão do navegador e não são salvas.")
 
@@ -2707,37 +2708,6 @@ AUDIO_PRO = {"Música calma": "soft calm background music", "Música animada": "
              "Sem música": "no music, subtle ambient sound"}
 
 
-def conectar_xai():
-    st.info("Para vídeos ultra profissionais, conecte sua chave da xAI (Grok Imagine). "
-            "Ela é diferente da chave Groq: é paga por uso, direto na xAI.")
-    with st.form("form_xai"):
-        chave = st.text_input("Cole sua chave xAI", type="password", placeholder="xai-...")
-        st.markdown(f"👉 **[Pegar minha chave xAI]({LINK_XAI})**")
-        ok_btn = st.form_submit_button("Conectar chave xAI", type="primary")
-    atalho_creditos("xai", "p_xcred_con")
-    with st.expander("🔑 Passo a passo: pegar a chave xAI e colar aqui", expanded=True):
-        st.markdown(
-            f"1. Toque aqui: **[abrir console.x.ai]({LINK_XAI})** (abre em outra aba).\n"
-            "2. Entre com sua conta **X**, **Google** ou **e-mail**. Não precisa de Premium.\n"
-            "3. Se pedir, crie um **Team** (só escreva um nome, ex.: Studio).\n"
-            "4. No menu, abra **Billing** e adicione créditos com cartão (ex.: US$ 5). "
-            "Sem saldo, a chave não gera vídeo.\n"
-            "5. No menu, abra **API Keys** e toque em **Create API Key**.\n"
-            "6. Dê o nome **Studio**, deixe **todas as permissões liberadas** e confirme.\n"
-            "7. Copie a chave que começa com **xai-** (ela só aparece uma vez).\n"
-            "8. Volte para esta aba, **cole no campo acima** e toque em **Conectar chave xAI**."
-        )
-    if ok_btn:
-        chave = limpar_chave(chave)
-        with st.spinner("Verificando…"):
-            ok, msg = validar_xai(chave)
-        if ok:
-            st.session_state.xai_key = chave
-            st.rerun()
-        else:
-            st.error(msg)
-
-
 # ---------------- fal.ai: vários motores de vídeo, pagos por uso ----------------
 LINK_FAL = "https://fal.ai/dashboard/keys"
 LINK_FAL_CREDITOS = "https://fal.ai/dashboard/billing"
@@ -3251,116 +3221,6 @@ def aba_pro_fal():
         aba_pro_avatar()
 
 
-def aba_pro_grok():
-    """Vídeos ultra profissionais com a Grok Imagine (xAI) — como antes."""
-    if not st.session_state.xai_key:
-        conectar_xai()
-        return
-
-    cx1, cx2, cx3 = st.columns([3, 2, 1.3], vertical_alignment="center")
-    cx1.success("Chave xAI conectada ✅")
-    with cx2:
-        atalho_creditos("xai", "p_xcred")
-    if cx3.button("Trocar chave", key=f"p_trocar_{st.session_state.rodada}"):
-        st.session_state.xai_key = ""
-        st.rerun()
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**1. Apresentador**")
-        modo = st.radio("Avatar", ["📷 Meu avatar (minha foto)", "🧑‍💼 Avatar pronto",
-                                   "🚫 Sem apresentador"], key=f"p_modo_{st.session_state.rodada}", label_visibility="collapsed")
-        foto, avatar = None, None
-        if modo.startswith("📷"):
-            foto = st.file_uploader("Sua foto (rosto de frente, boa luz)",
-                                    type=["png", "jpg", "jpeg", "webp"], key=f"p_foto_{st.session_state.rodada}")
-            if foto:
-                st.image(foto, width=170)
-        elif modo.startswith("🧑"):
-            avatar = st.selectbox("Escolha o avatar", list(AVATARES), key=f"p_avatar_{st.session_state.rodada}")
-            custom = st.text_input("…ou descreva seu avatar", key=f"p_avatar_custom_{st.session_state.rodada}",
-                                   placeholder="Ex.: senhora simpática de óculos, padaria ao fundo")
-            if custom:
-                avatar = custom
-        st.markdown("**2. Fala do apresentador**")
-        fala = st.text_area("Texto da fala (português)", key=f"p_fala_{st.session_state.rodada}", height=100,
-                            placeholder="Ex.: Olá! Aqui na Brasa Viva o hambúrguer é artesanal. Peça já!")
-        if st.button("✍️ Escrever fala com IA", key=f"p_fala_ia_{st.session_state.rodada}"):
-            with st.spinner("Escrevendo…"):
-                try:
-                    st.session_state.p_sugestao = chat_groq([
-                        {"role": "system", "content": "Escreva uma fala curta (máx. 35 palavras) "
-                         "em português do Brasil para um apresentador de comercial, com chamada "
-                         "final. Responda só com a fala."},
-                        {"role": "user", "content": f"Negócio: {st.session_state.get(f'p_prod_{st.session_state.rodada}') or 'meu negócio'}"}])
-                except Exception as e:
-                    st.error(str(e))
-        if st.session_state.get("p_sugestao"):
-            st.info(st.session_state.p_sugestao)
-    with c2:
-        st.markdown("**3. Configurações**")
-        produto = st.text_input("Produto / empresa *", key=f"p_prod_{st.session_state.rodada}")
-        estilo = st.selectbox("Estilo", list(ESTILOS_PRO), key=f"p_estilo_{st.session_state.rodada}")
-        tom = st.selectbox("Tom", TONS, index=5, key=f"p_tom_{st.session_state.rodada}")
-        cenario = st.text_input("Cenário", key=f"p_cen_{st.session_state.rodada}", placeholder="Ex.: loja moderna, ao ar livre")
-        audio = st.selectbox("Áudio de fundo", list(AUDIO_PRO), key=f"p_audio_{st.session_state.rodada}")
-        prop = st.selectbox("Formato", list(PROPORCOES_PRO), key=f"p_prop_{st.session_state.rodada}")
-        resolucao = st.radio("Qualidade", ["720p", "480p"], horizontal=True, key=f"p_res_{st.session_state.rodada}")
-        duracao = st.slider("Duração (segundos)", 5, 15, 10, key=f"p_dur_{st.session_state.rodada}")
-        cta = st.text_input("Chamada final (CTA)", key=f"p_cta_{st.session_state.rodada}")
-
-    confirmou = True
-    if COBRANCA_ATIVA:
-        st.markdown("---")
-        st.markdown(f"**4. Pagamento — R$ {PRECO_VIDEO_PRO}**")
-        if LINK_PAGAMENTO:
-            st.link_button(f"💳 Pagar R$ {PRECO_VIDEO_PRO}", LINK_PAGAMENTO)
-        if PIX_CHAVE:
-            st.code(f"PIX: {PIX_CHAVE}", language=None)
-        confirmou = st.checkbox("Já realizei o pagamento", key=f"p_pago_{st.session_state.rodada}")
-
-    if st.button("🚀 Criar vídeo profissional", type="primary", key=f"p_criar_{st.session_state.rodada}"):
-        if not produto.strip():
-            st.warning("Informe o produto / empresa.")
-            return
-        if not confirmou:
-            st.warning("Confirme o pagamento para gerar o vídeo profissional.")
-            return
-        if modo.startswith("📷") and not foto:
-            st.warning("Envie sua foto para criar seu avatar.")
-            return
-        barra = st.progress(2, text="Preparando…")
-        try:
-            imagem = None
-            if foto:
-                imagem = arquivo_para_data_uri(foto)
-            elif avatar:
-                barra.progress(5, text="Criando o avatar…")
-                imagem = gerar_imagem_xai(
-                    f"Photorealistic portrait of a {AVATARES.get(avatar, avatar)}. "
-                    f"Setting: {cenario or 'professional studio'}.", PROPORCOES_PRO[prop])
-                st.image(imagem, caption="Avatar gerado", width=170)
-            partes = [f"Professional advertising video for {produto}."]
-            if imagem and fala:
-                partes.append("The person in the image looks at the camera and speaks naturally in "
-                              f"Brazilian Portuguese with accurate lip-sync, saying: \"{fala}\".")
-            elif fala:
-                partes.append(f"Brazilian Portuguese voice-over says: \"{fala}\".")
-            partes += [f"Setting: {cenario}." if cenario else "", f"Style: {ESTILOS_PRO[estilo]}.",
-                       f"Tone: {tom}.", f"Background audio: {AUDIO_PRO[audio]}.",
-                       f"Final on-screen call to action: '{cta}'." if cta else "",
-                       "Ultra professional, broadcast quality, natural facial expressions."]
-            rid = iniciar_video_xai(" ".join(p for p in partes if p), duracao,
-                                    PROPORCOES_PRO[prop], resolucao, imagem)
-            url = aguardar_video_xai(rid, barra)
-            st.session_state.ultimo_pro = {"url": url, "bytes": baixar_bytes(url)}
-            salvar_galeria(produto.strip(), "Profissional", dados=st.session_state.ultimo_pro["bytes"], url=url)
-        except Exception as e:
-            barra.empty()
-            st.error(str(e))
-
-
-
 def aba_pago():
     t1, t2 = st.columns([3, 1], vertical_alignment="center")
     t1.subheader("💎 Criar vídeos ultra profissionais")
@@ -3384,16 +3244,9 @@ def aba_pago():
         "<b>Crie seu vídeo e comprove você mesmo!</b></div>",
         unsafe_allow_html=True)
 
-    plataforma = st.radio(
-        "Escolha a plataforma de IA",
-        ["🌐 Estúdio multi-IA — Google Veo, Kling, Seedance e avatar falante",
-         "⚡ Grok Imagine (xAI)"],
-        key=f"p_plataforma_{st.session_state.rodada}")
-    st.caption("Todas cobram só pelo vídeo que você criar — sem assinatura, sem mensalidade.")
-    if plataforma.startswith("🌐"):
-        aba_pro_fal()
-    else:
-        aba_pro_grok()
+    st.caption("🌐 Estúdio multi-IA — Google Veo, Kling, Seedance e avatar falante. Você paga "
+               "só pelo vídeo que criar — sem assinatura, sem mensalidade.")
+    aba_pro_fal()
 
     if st.session_state.ultimo_pro:
         st.success("Seu vídeo profissional está pronto! Ele já foi guardado em 📁 Meus vídeos.")
@@ -3494,7 +3347,11 @@ def _pesquisa_cache(pergunta, dia, chave, sistema_extra=""):
         "de forma simples, para leigos. Use a busca na internet para trazer informações ATUAIS. "
         "Responda em português do Brasil, organizado em tópicos curtos e práticos. Diga a data ou "
         "o período dos dados quando houver. No final, liste as fontes com o link de cada uma em "
-        "uma seção 'Fontes:'. Não invente números: se não encontrar, diga que não encontrou.")
+        "uma seção 'Fontes:'. Não invente números: se não encontrar, diga que não encontrou. "
+        "Na PRIMEIRA linha da resposta, escreva a confiança geral, exatamente num destes "
+        "formatos: 'Confiança: 🟢 alta — várias fontes confiáveis concordam', 'Confiança: 🟡 "
+        "média — poucas fontes ou fontes que discordam' ou 'Confiança: 🔴 baixa — não encontrei "
+        "informação confiável'. Só use 🟢 com pelo menos 2 fontes independentes concordando.")
     ultimo = ""
     for modelo in MODELOS_BUSCA:
         try:
@@ -3591,8 +3448,10 @@ def aba_aprenda():
     if res:
         with st.container(border=True):
             st.markdown(f"**{res['titulo']}** · "
-                        + (f"🟢 pesquisado na internet em {res['quando']}" if res["ao_vivo"]
-                           else "🟡 sem pesquisa ao vivo (conhecimento geral)"))
+                        + (f"🌐 pesquisado na internet em {res['quando']}" if res["ao_vivo"]
+                           else "📴 sem pesquisa ao vivo (conhecimento geral)"))
+            if res["ao_vivo"]:
+                painel_confianca(res["texto"])
             st.markdown(res["texto"])
 
     # ---------- análise do anúncio ----------
@@ -3762,7 +3621,13 @@ REGRAS_PROTECAO = (
     "'Não encontrei informação confiável sobre isso'.\n"
     "4) Não inclua dados pessoais de consumidores ou funcionários (nomes, telefones, perfis).\n"
     "5) Sempre diga a data ou o período das informações quando houver.\n"
-    "6) No final, liste TODAS as fontes usadas com o link, numa seção 'Fontes:'."
+    "6) No final, liste TODAS as fontes usadas com o link, numa seção 'Fontes:'.\n"
+    "7) Logo abaixo do título de CADA seção, escreva uma linha de confiança, exatamente num "
+    "destes formatos:\n"
+    "'Confiança: 🟢 alta — várias fontes confiáveis concordam'\n"
+    "'Confiança: 🟡 média — poucas fontes ou fontes que discordam'\n"
+    "'Confiança: 🔴 baixa — não encontrei informação confiável'\n"
+    "Seja rigoroso: só use 🟢 quando houver pelo menos 2 fontes independentes concordando."
 )
 
 SECOES_REPUTACAO = (
@@ -3803,6 +3668,39 @@ AVISO_PROTECAO = (
     "com as fontes. Ele pode conter erros ou estar incompleto e **não é uma avaliação oficial**, "
     "laudo técnico nem acusação contra marcas, lojas ou pessoas. Confira as fontes antes de "
     "decidir.")
+
+
+def contar_fontes(texto):
+    """Quantos links e sites diferentes a resposta usou como fonte."""
+    from urllib.parse import urlparse
+    urls = set(u.rstrip(".,;:") for u in re.findall(r"https?://[^\s\)\]>\"'】]+", texto or ""))
+    sites = set()
+    for u in urls:
+        try:
+            sites.add(urlparse(u).netloc.lower().removeprefix("www."))
+        except Exception:
+            pass
+    return len(urls), len({x for x in sites if x})
+
+
+def painel_confianca(texto):
+    """Mostra quantas fontes foram usadas e a confiança de cada seção; avisa se há poucas fontes."""
+    n_links, n_sites = contar_fontes(texto)
+    verdes, amarelos, vermelhos = (len(re.findall(r"Confian[çc]a:\s*" + c, texto or ""))
+                                   for c in ("🟢", "🟡", "🔴"))
+    partes = [f"📚 **{n_sites} site(s) diferentes** consultados ({n_links} links)"]
+    if verdes + amarelos + vermelhos:
+        partes.append(f"Confiança: 🟢 {verdes} · 🟡 {amarelos} · 🔴 {vermelhos}")
+    st.markdown(" &nbsp;|&nbsp; ".join(partes))
+    if n_sites < 3:
+        st.warning(f"⚠️ **Poucas fontes encontradas ({n_sites}).** Trate este resultado com "
+                   "cuidado e confira nos links antes de decidir. Tente também escrever o nome "
+                   "do produto ou do negócio de outro jeito (marca, modelo, cidade).")
+    elif vermelhos and vermelhos >= max(verdes, 1):
+        st.warning("⚠️ Várias partes ficaram com **confiança baixa** (🔴): a internet tem pouca "
+                   "informação confiável sobre isso. Confira as fontes antes de decidir.")
+    st.caption("🟢 alta — várias fontes concordam · 🟡 média — poucas fontes ou divergentes · "
+               "🔴 baixa — não encontrou informação confiável")
 
 
 def links_conferir(termo, loja=""):
@@ -3890,8 +3788,9 @@ def aba_protecao():
     if res:
         with st.container(border=True):
             st.markdown(f"### 🩻 Raio-X: {res['titulo']}")
-            st.caption(f"🟢 Pesquisado na internet em {res['quando']}")
+            st.caption(f"Pesquisado na internet em {res['quando']}")
             st.info(AVISO_PROTECAO)
+            painel_confianca(res["texto"])
             st.markdown(res["texto"])
             relatorio = (f"RAIO-X DO PRODUTO: {res['titulo']}\nPesquisado em {res['quando']}\n\n"
                          f"{res['texto']}\n\n---\nAviso: este relatório reúne informações públicas "
@@ -3972,8 +3871,10 @@ def aba_assistente():
         f"chama {st.session_state.nome}. Responda em português do Brasil, de forma clara e "
         "prática. O app tem: (1) Criar vídeo grátis — usa a chave Groq grátis; a IA escreve o "
         "roteiro, cria imagens grátis, narração em português, música e animações; (2) Criar "
-        "vídeos ultra profissionais — a pessoa conecta a chave xAI (console.x.ai, paga por uso, sem precisar "
-        "de Premium) e usa a Grok Imagine com avatar da própria foto falando, até 15s em 720p. "
+        "vídeos ultra profissionais — a pessoa conecta a chave da fal.ai (paga por uso, sem "
+        "mensalidade) e cria cenas realistas com Google Veo 3.1 (Lite, Fast e completo), Kling v3 "
+        "e Seedance 2.0, ou um avatar falando (Kling AI Avatar) com a própria foto e a própria "
+        "voz ou as vozes do app. "
         "O fundo das cenas pode ser o banco de fotos do app (escolhidas na galeria por categoria de negócio) ou as fotos do próprio usuário. "
         "O vídeo grátis também tem legendas estilo TikTok, selo de oferta, contagem regressiva, "
         "logo, QR code do WhatsApp, transições, efeitos sonoros, 8 estilos de música, modelos de "
@@ -4087,19 +3988,7 @@ def aba_tutorial():
             "O vídeo dura o mesmo tempo da fala (até 60 segundos).\n"
             "6. Toque em **🚀 Criar avatar falando** e aguarde de 1 a 5 minutos."
         )
-    with st.expander("6. Vídeos ultra profissionais com a Grok (xAI)"):
-        st.markdown(
-            "Outra opção, também paga por uso. Em **Escolha a plataforma de IA**, marque "
-            "**⚡ Grok Imagine (xAI)**.\n\n"
-            f"1. Crie uma conta em **[console.x.ai]({LINK_XAI})** — não precisa de Premium.\n"
-            "2. Em **Billing**, adicione créditos (a xAI cobra por segundo de vídeo).\n"
-            "3. Em **API Keys → Create API Key**, libere todas as permissões e copie o valor "
-            "(começa com **xai-**).\n"
-            "4. Cole a chave no Studio, envie sua foto (ou escolha um avatar), escreva a fala "
-            "e ajuste o estilo.\n"
-            "5. Clique em **Criar vídeo profissional** e aguarde de 1 a 4 minutos."
-        )
-    with st.expander("7. Aprenda a anunciar (pesquisa ao vivo e análise)"):
+    with st.expander("6. Aprenda a anunciar (pesquisa ao vivo e análise)"):
         st.markdown(
             "1. Abra a aba **📈 Aprenda a anunciar** e escreva o seu negócio.\n"
             "2. Toque num botão de pesquisa: **o que está em alta**, **anúncios que deram "
@@ -4110,7 +3999,7 @@ def aba_tutorial():
             "receba nota, pontos fracos e sugestões.\n"
             "4. Leia a **cartilha completa** — do primeiro anúncio ao checklist final."
         )
-    with st.expander("8. Proteção: raio-X de um produto antes de comprar ou vender"):
+    with st.expander("7. Proteção: raio-X de um produto antes de comprar ou vender"):
         st.markdown(
             "1. Abra a aba **🛡️ Proteção**.\n"
             "2. Escreva o **produto** (e, se souber, a marca, o modelo, a loja e o link).\n"
@@ -4123,10 +4012,13 @@ def aba_tutorial():
             "relatório.\n"
             "6. Veja também os **sinais de alerta**, os **seus direitos** e os **cuidados legais "
             "para anunciar**.\n\n"
+            "7. Repare na **confiança** de cada parte: 🟢 alta (várias fontes concordam), 🟡 "
+            "média (poucas fontes ou divergentes), 🔴 baixa (não encontrou informação "
+            "confiável). Se aparecer o aviso de **poucas fontes**, confira tudo nos links.\n\n"
             "_O raio-X reúne informações públicas da internet e pode conter erros: é um apoio "
             "para decidir, não uma avaliação oficial._"
         )
-    with st.expander("9. Dicas para vídeos que vendem"):
+    with st.expander("8. Dicas para vídeos que vendem"):
         st.markdown(
             "- Comece com um gancho forte na primeira cena.\n"
             "- Textos de tela curtos: até 7 palavras.\n"
@@ -4135,7 +4027,7 @@ def aba_tutorial():
             "- Vertical 9:16 funciona melhor em Reels, TikTok e Status.\n"
             "- Peça ideias ao **Assistente IA**."
         )
-    with st.expander("10. Problemas comuns"):
+    with st.expander("9. Problemas comuns"):
         st.markdown(
             "- **Chave Groq inválida:** copie a chave inteira (gsk_…). Se perdeu, crie outra.\n"
             "- **Limite da Groq:** a chave grátis tem limite por minuto; espere um pouco.\n"
@@ -4147,14 +4039,13 @@ def aba_tutorial():
             "conteúdo sensível.\n"
             "- **A página não abre ou aparece \"Failed to fetch\":** recarregue a página "
             "(Ctrl + Shift + R) ou feche e abra o link de novo.\n"
-            "- **Chave xAI recusada:** confira se é chave de API (xai-…) e se há créditos.\n"
-            "- **Vídeo profissional recusado:** a xAI bloqueia conteúdo impróprio, marcas de "
+            "- **Vídeo profissional recusado:** as IAs bloqueiam conteúdo impróprio, marcas de "
             "terceiros e pessoas famosas."
         )
 
 
 def app():
-    hero("Vídeos de publicidade grátis e ponte para vídeos ultra profissionais com a Grok Imagine.")
+    hero("Vídeos de publicidade grátis e ponte para vídeos ultra profissionais com inteligência artificial.")
     c1, c2 = st.columns([5, 1], vertical_alignment="center")
     c1.markdown(f"👋 Olá, **{st.session_state.nome}**!")
     if c2.button("Sair", key="sair"):
