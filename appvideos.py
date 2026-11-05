@@ -3487,9 +3487,9 @@ def limpar_citacoes(texto):
 
 
 @st.cache_data(ttl=6 * 60 * 60, show_spinner=False, max_entries=300)
-def _pesquisa_cache(pergunta, dia, chave):
+def _pesquisa_cache(pergunta, dia, chave, sistema_extra=""):
     """Faz a pesquisa na internet (guarda por 6 h para não repetir a mesma busca)."""
-    sistema = (
+    sistema = sistema_extra.replace("{dia}", dia) if sistema_extra else (
         f"Hoje é {dia}. Você é consultor de marketing para pequenos negócios brasileiros e explica "
         "de forma simples, para leigos. Use a busca na internet para trazer informações ATUAIS. "
         "Responda em português do Brasil, organizado em tópicos curtos e práticos. Diga a data ou "
@@ -3518,14 +3518,18 @@ def _pesquisa_cache(pergunta, dia, chave):
     raise RuntimeError(ultimo or "a pesquisa não respondeu")
 
 
-def pesquisa_ao_vivo(pergunta):
+def pesquisa_ao_vivo(pergunta, sistema_extra="", chave=None):
     """Pesquisa atualizada na internet. Se não der, responde sem busca e avisa.
     Devolve (texto, ao_vivo)."""
     dia = time.strftime("%d/%m/%Y")
     try:
-        return _pesquisa_cache(pergunta, dia, st.session_state.groq_key)
+        return _pesquisa_cache(pergunta, dia, chave or st.session_state.groq_key, sistema_extra)
     except Exception as e:
         aviso = str(e)
+    if sistema_extra:  # na Proteção, sem pesquisa real não dá para afirmar nada sobre o produto
+        raise RuntimeError("A pesquisa na internet não está disponível agora, e sem ela o "
+                           "raio-X não seria confiável. Tente de novo em alguns minutos. "
+                           f"(Detalhe: {aviso[:160]})")
     texto = chat_groq([
         {"role": "system", "content": "Você é consultor de marketing para pequenos negócios "
          "brasileiros. Responda em português do Brasil, em tópicos curtos e práticos, para leigos. "
@@ -3745,6 +3749,211 @@ def aba_aprenda():
             "(https://tikadtools.com/blog/tiktok-ads-mistakes/)")
 
 
+# ---------------- aba "Proteção · Raio-X do produto" ----------------
+REGRAS_PROTECAO = (
+    "Hoje é {dia}. Você é um analista de produtos e de reputação de empresas que trabalha para "
+    "consumidores e pequenos vendedores no Brasil. Use a busca na internet para encontrar "
+    "informações ATUAIS e PÚBLICAS. Regras obrigatórias:\n"
+    "1) Escreva em português do Brasil, em linguagem simples, para leigos.\n"
+    "2) Seja NEUTRO e factual: relate o que as fontes dizem ('segundo o Reclame Aqui…', 'em "
+    "avaliações na Amazon dos EUA, compradores relatam…'). Nunca acuse marcas, lojas ou pessoas, "
+    "nunca afirme crime ou fraude por conta própria e não use adjetivos ofensivos.\n"
+    "3) Não invente números, notas, prazos nem casos. Se não encontrar uma informação, escreva "
+    "'Não encontrei informação confiável sobre isso'.\n"
+    "4) Não inclua dados pessoais de consumidores ou funcionários (nomes, telefones, perfis).\n"
+    "5) Sempre diga a data ou o período das informações quando houver.\n"
+    "6) No final, liste TODAS as fontes usadas com o link, numa seção 'Fontes:'."
+)
+
+SECOES_REPUTACAO = (
+    "## ⭐ Resumo e nota indicativa\n"
+    "Nota indicativa de 0 a 10 (deixe claro que é baseada só nas fontes encontradas) e um "
+    "resumo de 3 linhas: vale a pena?\n"
+    "## 🏢 Reclame Aqui e reputação da empresa\n"
+    "Reputação da marca/loja no Reclame Aqui (selo, nota, índice de solução e se voltaria a "
+    "fazer negócio, se encontrar), e no consumidor.gov.br se houver.\n"
+    "## 🔁 Principais reclamações\n"
+    "As reclamações que mais se repetem, em ordem, e se costumam ser resolvidas.\n"
+    "## 📱 Opinião nas redes sociais\n"
+    "O que dizem no TikTok, Instagram, YouTube, X e fóruns: elogios e críticas mais repetidos.\n"
+    "## 🚨 Alertas\n"
+    "Golpes, sites falsos ou clonados, falsificações, recalls oficiais e preços bons demais "
+    "para ser verdade ligados a este produto ou loja. Se não houver, diga que não encontrou."
+)
+SECOES_PRODUTO = (
+    "## 🔧 Qualidade e durabilidade\n"
+    "Quanto tempo costuma durar, defeitos mais comuns, garantia do fabricante e assistência "
+    "técnica no Brasil.\n"
+    "## 🌎 Lá fora\n"
+    "Como o produto é avaliado em outros países (ex.: Amazon EUA, Europa, Ásia) e se a "
+    "percepção é diferente da do Brasil.\n"
+    "## 💰 Preço e alternativas\n"
+    "Faixa de preço encontrada no Brasil (com a data) e 2 ou 3 alternativas bem avaliadas.\n"
+)
+SECAO_VENDEDOR = (
+    "## 🛒 Para quem vai vender ou anunciar\n"
+    "É um bom produto para revender/anunciar? Concorrência, margem típica se encontrar, "
+    "riscos (devolução, defeito, reclamação) e o que PRECISA ficar claro no anúncio para evitar "
+    "problemas. Diga se esse tipo de produto costuma exigir registro ou certificação no Brasil "
+    "(ex.: ANVISA, INMETRO, Anatel, MAPA) e recomende conferir no órgão oficial."
+)
+
+AVISO_PROTECAO = (
+    "Este relatório reúne **informações públicas encontradas na internet na data da pesquisa**, "
+    "com as fontes. Ele pode conter erros ou estar incompleto e **não é uma avaliação oficial**, "
+    "laudo técnico nem acusação contra marcas, lojas ou pessoas. Confira as fontes antes de "
+    "decidir.")
+
+
+def links_conferir(termo, loja=""):
+    """Links para a pessoa conferir com os próprios olhos."""
+    q = quote(termo)
+    links = [
+        ("Reclame Aqui", f"https://www.reclameaqui.com.br/busca/?q={quote(loja or termo)}"),
+        ("consumidor.gov.br", "https://www.consumidor.gov.br"),
+        ("Avaliações no YouTube", f"https://www.youtube.com/results?search_query={q}+review"),
+        ("Opiniões no TikTok", f"https://www.tiktok.com/search?q={q}"),
+        ("Amazon EUA (avaliações lá fora)", f"https://www.amazon.com/s?k={q}"),
+        ("Notícias no Google", f"https://www.google.com/search?q={q}&tbm=nws"),
+    ]
+    return links
+
+
+def verificar_site_link(url):
+    """Link do Google Transparency Report para checar se um site é conhecido como perigoso."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    return f"https://transparencyreport.google.com/safe-browsing/search?url={quote(url, safe='')}"
+
+
+def raio_x(produto, marca, loja, link, objetivo):
+    """Faz duas pesquisas em paralelo (reputação + produto) e junta o relatório."""
+    alvo = " ".join(x for x in (produto, marca) if x).strip()
+    contexto = (f"Produto: {produto}\nMarca/modelo: {marca or '-'}\nLoja ou site onde viu: "
+                f"{loja or '-'}\nLink: {link or '-'}\nObjetivo da pessoa: {objetivo}")
+    p1 = (f"Faça um raio-X da reputação e das reclamações de: {alvo}"
+          + (f" (vendido por {loja})" if loja else "") + ".\n" + contexto
+          + "\n\nResponda exatamente com estas seções, nesta ordem:\n" + SECOES_REPUTACAO)
+    p2 = (f"Faça um raio-X da qualidade, durabilidade e avaliação internacional de: {alvo}.\n"
+          + contexto + "\n\nResponda exatamente com estas seções, nesta ordem:\n" + SECOES_PRODUTO
+          + (SECAO_VENDEDOR if objetivo != "Vou comprar" else ""))
+    chave = st.session_state.groq_key  # lido aqui: as pesquisas rodam em paralelo
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f1 = ex.submit(pesquisa_ao_vivo, p1, REGRAS_PROTECAO, chave)
+        f2 = ex.submit(pesquisa_ao_vivo, p2, REGRAS_PROTECAO, chave)
+        (t1, ok1), (t2, ok2) = f1.result(), f2.result()
+    return t1.strip() + "\n\n---\n\n" + t2.strip(), ok1 and ok2
+
+
+def aba_protecao():
+    st.subheader("🛡️ Proteção · Raio-X do produto")
+    st.caption("Antes de comprar ou de anunciar, descubra o que a internet diz sobre o produto: "
+               "reputação, Reclame Aqui, redes sociais, durabilidade, avaliação lá fora e alertas.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        produto = st.text_input("Produto *", key="pr_produto",
+                                placeholder="Ex.: fritadeira elétrica sem óleo 4 litros")
+        marca = st.text_input("Marca e modelo (se souber)", key="pr_marca",
+                              placeholder="Ex.: Mondial AF-30")
+        objetivo = st.radio("Qual é o seu objetivo?",
+                            ["Vou comprar", "Vou vender ou anunciar", "Os dois"],
+                            key="pr_objetivo", horizontal=True)
+    with c2:
+        loja = st.text_input("Loja ou site onde você viu (opcional)", key="pr_loja",
+                             placeholder="Ex.: Loja Exemplo, perfil @exemplo, marketplace…")
+        link = st.text_input("Link do anúncio (opcional)", key="pr_link",
+                             placeholder="https://…")
+        detalhes = st.text_area("Conte o que te interessou ou preocupa (opcional)",
+                                key="pr_detalhes", height=80,
+                                placeholder="Ex.: o preço está bem abaixo das outras lojas")
+
+    if st.button("🔍 Fazer o raio-X do produto", type="primary", key="pr_buscar"):
+        if not produto.strip():
+            st.warning("Escreva o nome do produto.")
+        else:
+            barra = st.progress(5, text="Pesquisando reputação, reclamações e opiniões…")
+            try:
+                prod = produto.strip() + (f" — {detalhes.strip()}" if detalhes.strip() else "")
+                texto, ao_vivo = raio_x(prod, marca.strip(), loja.strip(), link.strip(), objetivo)
+                barra.progress(100, text="Raio-X pronto!")
+                st.session_state.pr_resultado = {
+                    "titulo": " ".join(x for x in (produto.strip(), marca.strip()) if x),
+                    "texto": texto, "ao_vivo": ao_vivo, "quando": time.strftime("%d/%m/%Y %H:%M"),
+                    "loja": loja.strip(), "link": link.strip()}
+            except Exception as e:
+                barra.empty()
+                st.error(str(e))
+
+    res = st.session_state.get("pr_resultado")
+    if res:
+        with st.container(border=True):
+            st.markdown(f"### 🩻 Raio-X: {res['titulo']}")
+            st.caption(f"🟢 Pesquisado na internet em {res['quando']}")
+            st.info(AVISO_PROTECAO)
+            st.markdown(res["texto"])
+            relatorio = (f"RAIO-X DO PRODUTO: {res['titulo']}\nPesquisado em {res['quando']}\n\n"
+                         f"{res['texto']}\n\n---\nAviso: este relatório reúne informações públicas "
+                         "encontradas na internet na data da pesquisa. Pode conter erros e não é "
+                         "uma avaliação oficial. Confira as fontes.")
+            st.download_button("⬇️ Baixar relatório (.txt)", relatorio.encode("utf-8"),
+                               file_name=f"raio-x_{int(time.time())}.txt", mime="text/plain",
+                               key="pr_baixar")
+        st.markdown("**🔗 Confira você mesmo:**")
+        cols = st.columns(3)
+        for i, (nome, url) in enumerate(links_conferir(res["titulo"], res.get("loja", ""))):
+            cols[i % 3].link_button(nome, url, use_container_width=True)
+        if res.get("link"):
+            st.link_button("🛡️ Verificar se o site do link é seguro (Google)",
+                           verificar_site_link(res["link"]))
+
+    with st.expander("🧭 Sinais de alerta antes de comprar pela internet"):
+        st.markdown(
+            "- **Preço muito abaixo** das outras lojas.\n"
+            "- **Só aceita PIX** ou pede pagamento para uma pessoa física diferente do nome "
+            "da loja.\n"
+            "- **Site novo**, sem CNPJ, endereço ou telefone, ou com o endereço do site "
+            "parecido com o de uma marca famosa (letra trocada, final diferente).\n"
+            "- **Perfil sem histórico**, comentários desativados ou só elogios iguais.\n"
+            "- **Pressão para pagar rápido** (“só hoje”, “últimas unidades” o tempo todo).\n"
+            "- **Ausência de nota fiscal** ou de política de troca.\n\n"
+            "Na dúvida: pesquise o CNPJ, veja a loja no Reclame Aqui e prefira pagar com "
+            "cartão de crédito ou por intermediadores com proteção ao comprador.")
+    with st.expander("⚖️ Seus direitos como consumidor (Código de Defesa do Consumidor)"):
+        st.markdown(
+            "- **Arrependimento em 7 dias:** comprou pela internet ou fora da loja física? Você "
+            "pode desistir em até 7 dias do recebimento e receber o valor de volta (art. 49).\n"
+            "- **Garantia legal:** 30 dias para produtos não duráveis e 90 dias para duráveis, "
+            "para reclamar de defeitos (art. 26) — além da garantia do fabricante.\n"
+            "- **A oferta vale:** o que foi anunciado precisa ser cumprido (art. 30 e 35).\n"
+            "- **Publicidade enganosa é proibida** (art. 37).\n\n"
+            "**Onde reclamar, nesta ordem:**\n"
+            "1. Direto com a loja (guarde protocolos, prints e nota fiscal);\n"
+            "2. **[consumidor.gov.br](https://www.consumidor.gov.br)** (serviço público e "
+            "gratuito) e o **Reclame Aqui**;\n"
+            "3. **Procon** da sua cidade ou estado;\n"
+            "4. **Juizado Especial Cível:** causas de até 20 salários mínimos sem advogado "
+            "(Lei 9.099/95).\n\n"
+            "_Informação geral, não substitui orientação de um advogado ou do Procon._")
+    with st.expander("📣 Cuidados legais para quem vai anunciar ou revender"):
+        st.markdown(
+            "- **Anuncie só o que é verdade:** nada de prometer resultado, prazo ou "
+            "característica que o produto não tem (CDC, art. 37).\n"
+            "- **Mostre preço, condições e prazo de entrega** de forma clara.\n"
+            "- **Alguns produtos exigem registro ou certificação** para serem vendidos no "
+            "Brasil — por exemplo: cosméticos, saneantes e suplementos (**ANVISA**), "
+            "brinquedos e alguns eletroportáteis (**INMETRO**), aparelhos com Wi-Fi/Bluetooth "
+            "(**Anatel**), produtos de origem animal e para pets (**MAPA**). Confira no órgão "
+            "oficial antes de vender.\n"
+            "- **Não use marca, imagem ou nome de terceiros** sem autorização (nem de "
+            "famosos).\n"
+            "- **Respeite o direito de arrependimento e a garantia** — informe sua política de "
+            "troca.\n"
+            "- **Emita nota fiscal** e mantenha seus dados de contato visíveis.\n\n"
+            "_Informação geral. Em caso de dúvida, consulte um contador ou advogado._")
+
+
 def aba_assistente():
     st.subheader("🤖 Assistente IA")
     c1, c2 = st.columns([3, 1])
@@ -3770,6 +3979,8 @@ def aba_assistente():
         "logo, QR code do WhatsApp, transições, efeitos sonoros, 8 estilos de música, modelos de "
         "anúncio, 3 versões de roteiro e kit de postagem (capa, legenda e hashtags). A aba "
         "Aprenda a anunciar tem pesquisa ao vivo na internet, análise do anúncio e uma cartilha. "
+        "A aba Proteção faz um raio-X de qualquer produto (reputação, Reclame Aqui, redes "
+        "sociais, durabilidade, avaliação lá fora, alertas e cuidados para vender), com fontes. "
         "Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
     for m in st.session_state.chat:
         with st.chat_message(m["role"], avatar="🧑" if m["role"] == "user" else "🤖"):
@@ -3899,7 +4110,23 @@ def aba_tutorial():
             "receba nota, pontos fracos e sugestões.\n"
             "4. Leia a **cartilha completa** — do primeiro anúncio ao checklist final."
         )
-    with st.expander("8. Dicas para vídeos que vendem"):
+    with st.expander("8. Proteção: raio-X de um produto antes de comprar ou vender"):
+        st.markdown(
+            "1. Abra a aba **🛡️ Proteção**.\n"
+            "2. Escreva o **produto** (e, se souber, a marca, o modelo, a loja e o link).\n"
+            "3. Diga se você **vai comprar**, **vai vender** ou **os dois**.\n"
+            "4. Toque em **🔍 Fazer o raio-X**. O app pesquisa a internet na hora e traz: nota "
+            "indicativa, Reclame Aqui, principais reclamações, redes sociais, alertas de golpe, "
+            "durabilidade, avaliação em outros países, preço e alternativas — e, para quem "
+            "vende, os cuidados no anúncio.\n"
+            "5. Confira as **fontes** e use os botões **Confira você mesmo**. Dá para baixar o "
+            "relatório.\n"
+            "6. Veja também os **sinais de alerta**, os **seus direitos** e os **cuidados legais "
+            "para anunciar**.\n\n"
+            "_O raio-X reúne informações públicas da internet e pode conter erros: é um apoio "
+            "para decidir, não uma avaliação oficial._"
+        )
+    with st.expander("9. Dicas para vídeos que vendem"):
         st.markdown(
             "- Comece com um gancho forte na primeira cena.\n"
             "- Textos de tela curtos: até 7 palavras.\n"
@@ -3908,7 +4135,7 @@ def aba_tutorial():
             "- Vertical 9:16 funciona melhor em Reels, TikTok e Status.\n"
             "- Peça ideias ao **Assistente IA**."
         )
-    with st.expander("9. Problemas comuns"):
+    with st.expander("10. Problemas comuns"):
         st.markdown(
             "- **Chave Groq inválida:** copie a chave inteira (gsk_…). Se perdeu, crie outra.\n"
             "- **Limite da Groq:** a chave grátis tem limite por minuto; espere um pouco.\n"
@@ -3935,7 +4162,7 @@ def app():
             del st.session_state[k]
         st.rerun()
     abas = st.tabs(["🎁 Criar vídeo grátis", "💎 Criar vídeos ultra profissionais", "📁 Meus vídeos",
-                    "📈 Aprenda a anunciar", "🤖 Assistente IA", "📚 Tutorial"])
+                    "📈 Aprenda a anunciar", "🛡️ Proteção", "🤖 Assistente IA", "📚 Tutorial"])
     with abas[0]:
         aba_gratis()
     with abas[1]:
@@ -3945,8 +4172,10 @@ def app():
     with abas[3]:
         aba_aprenda()
     with abas[4]:
-        aba_assistente()
+        aba_protecao()
     with abas[5]:
+        aba_assistente()
+    with abas[6]:
         aba_tutorial()
 
 
