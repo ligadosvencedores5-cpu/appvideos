@@ -6,3 +6,4 @@ imageio-ffmpeg
 gTTS
 edge-tts
 fal-client
+qrcode
