@@ -370,7 +370,8 @@ FORMATOS_GRATIS = {
     "Quadrado 1:1 (Feed)": (960, 960),
     "Retrato 4:5 (Feed)": (864, 1080),
 }
-MUSICAS = ["Animada", "Calma", "Épica", "Emocional", "Sem música"]
+MUSICAS = ["Animada", "Calma", "Épica", "Emocional", "Eletrônica", "Lo-fi", "Motivacional",
+           "Festa", "Sem música"]
 TONS = ["Inspirador", "Divertido", "Urgente (promoção)", "Luxuoso", "Emocional",
         "Profissional", "Jovem e descolado"]
 
@@ -821,38 +822,51 @@ def camada_marca(W, H, tema, marca):
     return camada
 
 
-def camada_texto_cena(W, H, tema, texto):
+def _cortar_linhas(linhas, limite):
+    """Mostra só os primeiros 'limite' caracteres (efeito máquina de escrever)."""
+    if limite is None:
+        return linhas
+    saida, resto = [], limite
+    for ln in linhas:
+        saida.append(ln[:max(0, resto)])
+        resto -= len(ln) + 1
+    return saida
+
+
+def camada_texto_cena(W, H, tema, texto, topo=False, limite=None):
     camada = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if not texto:
         return camada
     d = ImageDraw.Draw(camada)
     menor = min(W, H)
     if tema["layout"] == "centro":
-        fnt = fonte("bold", int(menor * 0.088))
+        fnt = fonte("bold", int(menor * (0.075 if topo else 0.088)))
         linhas = quebrar_texto(d, texto.upper(), fnt, W * 0.84)
         alt_linha = fnt.size * 1.15
-        y = H * 0.5 - alt_linha * len(linhas) / 2
+        y = H * 0.13 if topo else H * 0.5 - alt_linha * len(linhas) / 2
+        linhas_vis = _cortar_linhas(linhas, limite)
         sombra = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         ds = ImageDraw.Draw(sombra)
-        for i, ln in enumerate(linhas):
+        for i, ln in enumerate(linhas_vis):
             ds.text((W / 2, y + i * alt_linha + 4), ln, font=fnt, fill=(0, 0, 0, 200), anchor="mt")
         sombra = sombra.filter(ImageFilter.GaussianBlur(menor * 0.012))
         camada = Image.alpha_composite(camada, sombra)
         d = ImageDraw.Draw(camada)
-        for i, ln in enumerate(linhas):
+        for i, ln in enumerate(linhas_vis):
             d.text((W / 2, y + i * alt_linha), ln, font=fnt, fill=tema["txt"] + (255,), anchor="mt")
         yb = y + alt_linha * len(linhas) + menor * 0.025
         d.rounded_rectangle([W / 2 - menor * 0.09, yb, W / 2 + menor * 0.09, yb + menor * 0.014],
                             radius=int(menor * 0.007), fill=tema["acc"] + (255,))
     else:
-        fnt = fonte("bold", int(menor * 0.068))
+        fnt = fonte("bold", int(menor * (0.06 if topo else 0.068)))
         pad = menor * 0.045
         largura = W * 0.86
         linhas = quebrar_texto(d, texto, fnt, largura - 2 * pad)
         alt_linha = fnt.size * 1.22
         alt_caixa = alt_linha * len(linhas) + 2 * pad
-        base_y = H * (0.86 if H > W else 0.9)
+        base_y = (H * 0.12 + alt_caixa) if topo else H * (0.86 if H > W else 0.9)
         x0, y0 = (W - largura) / 2, base_y - alt_caixa
+        linhas = _cortar_linhas(linhas, limite)
         alfa_caixa = 230 if tema["caixa"] == (255, 255, 255) else 205
         d.rounded_rectangle([x0, y0, x0 + largura, base_y], radius=int(menor * 0.035),
                             fill=tema["caixa"] + (alfa_caixa,))
@@ -864,40 +878,316 @@ def camada_texto_cena(W, H, tema, texto):
     return camada
 
 
-def fundo_cta(W, H, tema, produto, cta, contato, foto=None):
+def fundo_cta(W, H, tema, produto, cta, contato, foto=None, logo=None, qr=None,
+              contagem=False):
+    """Cartão final. Empilha: logo, nome, contagem regressiva, botão, contato e QR code.
+    Devolve (fundo, camada, extras) — extras['contagem'] = (cx, cy, lado) do número animado."""
     fundo = arte_fundo(int(W * 1.15), int(H * 1.15), tema, 999)
     if foto is not None:
         # foto do anúncio desfocada atrás do cartão final, com a cor do tema por cima
         borrada = ImageOps.fit(foto.convert("RGB"), fundo.size, Image.LANCZOS)
         borrada = borrada.filter(ImageFilter.GaussianBlur(min(W, H) * 0.025))
         fundo = Image.blend(borrada, fundo, 0.55)
+    menor = min(W, H)
+    cor_txt = cor_contraste(tema["c1"]) if tema["caixa"] == (255, 255, 255) else (255, 255, 255)
+    rascunho = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    for sf in (1.0, 0.86, 0.74, 0.64):
+        itens = []  # (tipo, altura, dados)
+        if logo is not None:
+            lg = logo.copy()
+            lg.thumbnail((int(W * 0.5 * sf), int(H * 0.13 * sf)), Image.LANCZOS)
+            itens.append(("logo", lg.height, lg))
+        f1 = fonte("bold", int(menor * 0.095 * sf))
+        linhas = quebrar_texto(rascunho, (produto or "").upper(), f1, W * 0.86, 3)
+        itens.append(("nome", f1.size * 1.12 * len(linhas), (f1, linhas)))
+        if contagem:
+            f_lab = fonte("bold", int(menor * 0.04 * sf))
+            lado = int(menor * 0.13 * sf)
+            itens.append(("contagem", f_lab.size * 1.5 + lado, (f_lab, lado)))
+        if cta:
+            f2 = fonte("bold", int(menor * 0.058 * sf))
+            lcta = quebrar_texto(rascunho, cta, f2, W * 0.74, 2)
+            itens.append(("cta", f2.size * 1.2 * len(lcta) + menor * 0.06 * sf, (f2, lcta)))
+        if contato:
+            f3 = fonte("semi", int(menor * 0.045 * sf))
+            itens.append(("contato", f3.size * 1.3, f3))
+        if qr is not None:
+            q = qr.copy()
+            q.thumbnail((int(W * 0.40 * sf), int(H * 0.30 * sf)), Image.LANCZOS)
+            itens.append(("qr", q.height, q))
+        gap = menor * 0.045 * sf
+        total = sum(h for _, h, _ in itens) + gap * (len(itens) - 1)
+        if total <= H * 0.9:
+            break
+    camada = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(camada)
+    y = max(H * 0.05, (H - total) / 2 - (H * 0.03 if qr is None else 0))
+    extras = {"contagem": None}
+    for tipo, alt, dados in itens:
+        if tipo == "logo":
+            camada.alpha_composite(dados, (int((W - dados.width) / 2), int(y)))
+        elif tipo == "nome":
+            f1, linhas = dados
+            for i, ln in enumerate(linhas):
+                d.text((W / 2, y + i * f1.size * 1.12), ln, font=f1, fill=cor_txt + (255,),
+                       anchor="mt")
+        elif tipo == "contagem":
+            f_lab, lado = dados
+            d.text((W / 2, y), "A OFERTA ACABA EM", font=f_lab, fill=cor_txt + (240,), anchor="mt")
+            extras["contagem"] = (W / 2, y + f_lab.size * 1.5 + lado / 2, lado)
+        elif tipo == "cta":
+            f2, lcta = dados
+            alt2 = f2.size * 1.2
+            bw = max(d.textlength(l, font=f2) for l in lcta) + menor * 0.12
+            bh = alt
+            d.rounded_rectangle([W / 2 - bw / 2, y, W / 2 + bw / 2, y + bh],
+                                radius=int(bh / 2.2), fill=tema["acc"] + (255,))
+            for i, ln in enumerate(lcta):
+                d.text((W / 2, y + menor * 0.03 + i * alt2), ln, font=f2,
+                       fill=cor_contraste(tema["acc"]) + (255,), anchor="mt")
+        elif tipo == "contato":
+            d.text((W / 2, y), contato, font=dados, fill=cor_txt + (240,), anchor="mt")
+        elif tipo == "qr":
+            camada.alpha_composite(dados, (int((W - dados.width) / 2), int(y)))
+        y += alt + gap
+    return fundo, camada, extras
+
+
+# ---------------- extras do vídeo grátis ----------------
+TRANSICOES = ["Variada (todas)", "Suave (fundido)", "Zoom rápido", "Deslizar", "Flash",
+              "Tremida (glitch)"]
+ANIM_TEXTO = ["Subir suave", "Pop (pulo)", "Máquina de escrever", "Deslizar da lateral"]
+SELOS = ["Sem selo", "Preço (R$)", "Desconto (%)", "SÓ HOJE!", "FRETE GRÁTIS", "NOVIDADE",
+         "ÚLTIMAS UNIDADES", "Outro texto"]
+
+
+def cor_destaque(tema):
+    """Cor viva para destaques (legenda e selo)."""
+    acc = tema["acc"]
+    lum = 0.299 * acc[0] + 0.587 * acc[1] + 0.114 * acc[2]
+    return acc if 60 < lum < 235 else (250, 204, 21)
+
+
+def grupos_legenda(palavras, max_palavras=3):
+    """Agrupa as palavras faladas em blocos curtos (estilo TikTok)."""
+    grupos, atual = [], []
+    for w in palavras:
+        atual.append(w)
+        if len(atual) >= max_palavras or w[2][-1:] in ".,!?;:":
+            grupos.append(atual)
+            atual = []
+    if atual:
+        grupos.append(atual)
+    return grupos
+
+
+def camada_legenda(W, H, tema, palavras, destaque):
+    """Legenda grande com a palavra falada em destaque. Devolve arrays da faixa usada."""
     camada = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(camada)
     menor = min(W, H)
-    cor_txt = cor_contraste(tema["c1"]) if tema["caixa"] == (255, 255, 255) else (255, 255, 255)
-    f1 = fonte("bold", int(menor * 0.095))
-    linhas = quebrar_texto(d, (produto or "").upper(), f1, W * 0.86, 3)
-    alt = f1.size * 1.12
-    y = H * 0.40 - alt * len(linhas) / 2
-    for i, ln in enumerate(linhas):
-        d.text((W / 2, y + i * alt), ln, font=f1, fill=cor_txt + (255,), anchor="mt")
-    y += alt * len(linhas) + menor * 0.06
-    if cta:
-        f2 = fonte("bold", int(menor * 0.058))
-        lcta = quebrar_texto(d, cta, f2, W * 0.74, 2)
-        alt2 = f2.size * 1.2
-        bw = max(d.textlength(l, font=f2) for l in lcta) + menor * 0.12
-        bh = alt2 * len(lcta) + menor * 0.06
-        d.rounded_rectangle([W / 2 - bw / 2, y, W / 2 + bw / 2, y + bh], radius=int(bh / 2.2),
-                            fill=tema["acc"] + (255,))
-        for i, ln in enumerate(lcta):
-            d.text((W / 2, y + menor * 0.03 + i * alt2), ln, font=f2,
-                   fill=cor_contraste(tema["acc"]) + (255,), anchor="mt")
-        y += bh + menor * 0.05
-    if contato:
-        f3 = fonte("semi", int(menor * 0.045))
-        d.text((W / 2, y), contato, font=f3, fill=cor_txt + (240,), anchor="mt")
-    return fundo, camada
+    fnt = fonte("bold", int(menor * 0.078))
+    fnt_d = fonte("bold", int(menor * 0.09))
+    textos = [w[2].upper().strip() for w in palavras]
+    esp = fnt.size * 0.32
+    larg = [d.textlength(t, font=fnt_d if i == destaque else fnt) for i, t in enumerate(textos)]
+    # quebra em até 2 linhas se não couber
+    linhas, atual, tam = [], [], 0
+    for i, lw in enumerate(larg):
+        if atual and tam + esp + lw > W * 0.9:
+            linhas.append(atual)
+            atual, tam = [], 0
+        atual.append(i)
+        tam += lw + (esp if len(atual) > 1 else 0)
+    if atual:
+        linhas.append(atual)
+    alt = fnt_d.size * 1.18
+    y = H * 0.70 - alt * len(linhas) / 2
+    cor = cor_destaque(tema)
+    borda = max(3, int(menor * 0.008))
+    for ln in linhas:
+        total = sum(larg[i] for i in ln) + esp * (len(ln) - 1)
+        x = (W - total) / 2
+        for i in ln:
+            f = fnt_d if i == destaque else fnt
+            d.text((x, y + alt / 2), textos[i], font=f, anchor="lm",
+                   fill=(cor if i == destaque else (255, 255, 255)) + (255,),
+                   stroke_width=borda, stroke_fill=(0, 0, 0, 255))
+            x += larg[i] + esp
+        y += alt
+    return para_arrays(camada)
+
+
+def imagem_selo(texto, tema, W):
+    """Selo de oferta (estrela) em RGBA, girado de leve."""
+    lado = int(W * 0.34)
+    img = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    cx = cy = lado / 2
+    r1, r2, pontas = lado * 0.48, lado * 0.40, 16
+    pontos = []
+    for k in range(pontas * 2):
+        r = r1 if k % 2 == 0 else r2
+        a = math.pi * k / pontas
+        pontos.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    cor = cor_destaque(tema)
+    sombra = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+    ImageDraw.Draw(sombra).polygon([(x + 5, y + 7) for x, y in pontos], fill=(0, 0, 0, 120))
+    img = Image.alpha_composite(img, sombra.filter(ImageFilter.GaussianBlur(6)))
+    d = ImageDraw.Draw(img)
+    d.polygon(pontos, fill=cor + (255,))
+    d.ellipse([cx - r2 * 0.86, cy - r2 * 0.86, cx + r2 * 0.86, cy + r2 * 0.86],
+              outline=(255, 255, 255, 230), width=max(2, lado // 70))
+    palavras = texto.upper().split()
+    for tam in (0.24, 0.2, 0.17, 0.14, 0.12, 0.1):
+        fnt = fonte("bold", int(lado * tam))
+        linhas = quebrar_texto(d, " ".join(palavras), fnt, r2 * 1.45, 3)
+        if " ".join(linhas) == " ".join(palavras) and \
+                max(d.textlength(l, font=fnt) for l in linhas) <= r2 * 1.5:
+            break
+    alt = fnt.size * 1.05
+    y = cy - alt * len(linhas) / 2
+    txt = cor_contraste(cor)
+    for ln in linhas:
+        d.text((cx, y + alt / 2), ln, font=fnt, fill=txt + (255,), anchor="mm")
+        y += alt
+    return img.rotate(12, resample=Image.BICUBIC, expand=False)
+
+
+def colar_rgba(arr, img, cx, cy, escala=1.0, alfa=1.0):
+    """Cola uma imagem RGBA (PIL) centrada em (cx, cy) num quadro numpy, com escala."""
+    if escala <= 0.02 or alfa <= 0.01:
+        return arr
+    w, h = max(1, int(img.width * escala)), max(1, int(img.height * escala))
+    im = img.resize((w, h), Image.BILINEAR) if (w, h) != img.size else img
+    x0, y0 = int(cx - w / 2), int(cy - h / 2)
+    H, W = arr.shape[:2]
+    ax0, ay0, ax1, ay1 = max(0, x0), max(0, y0), min(W, x0 + w), min(H, y0 + h)
+    if ax1 <= ax0 or ay1 <= ay0:
+        return arr
+    pedaco = np.asarray(im, dtype=np.float32)[ay0 - y0:ay1 - y0, ax0 - x0:ax1 - x0]
+    a = pedaco[..., 3:4] / 255.0 * alfa
+    arr[ay0:ay1, ax0:ax1] = arr[ay0:ay1, ax0:ax1] * (1 - a) + pedaco[..., :3] * a
+    return arr
+
+
+def escala_pop(t, dur=0.38):
+    """Escala do efeito 'pop': cresce, passa um pouco e volta (0 antes de começar)."""
+    if t <= 0:
+        return 0.0
+    if t >= dur:
+        return 1.0
+    x = t / dur
+    c = 1.70158
+    return 1 + (c + 1) * (x - 1) ** 3 + c * (x - 1) ** 2
+
+
+def preparar_logo(arquivo, max_w, max_h):
+    """Logo pronto para o vídeo: mantém a transparência; se não tiver, põe num cartão branco."""
+    img = ImageOps.exif_transpose(Image.open(arquivo)).convert("RGBA")
+    transparente = img.getchannel("A").getextrema()[0] < 250
+    img.thumbnail((int(max_w), int(max_h)), Image.LANCZOS)
+    if transparente:
+        return img
+    pad = max(6, int(min(img.size) * 0.12))
+    card = Image.new("RGBA", (img.width + 2 * pad, img.height + 2 * pad), (0, 0, 0, 0))
+    ImageDraw.Draw(card).rounded_rectangle([0, 0, card.width - 1, card.height - 1],
+                                           radius=pad, fill=(255, 255, 255, 240))
+    card.alpha_composite(img, (pad, pad))
+    return card
+
+
+def link_whatsapp(numero, produto=""):
+    dig = re.sub(r"\D", "", numero or "")
+    if not dig:
+        return ""
+    if len(dig) in (10, 11):
+        dig = "55" + dig
+    msg = quote(f"Olá! Vi o anúncio{(' da ' + produto) if produto else ''} e quero saber mais.")
+    return f"https://wa.me/{dig}?text={msg}"
+
+
+def imagem_qr(link, lado):
+    """QR code do WhatsApp num cartão branco com a legenda embaixo."""
+    try:
+        import qrcode
+    except Exception:
+        if not _instalar("qrcode"):
+            return None
+        import importlib
+        importlib.invalidate_caches()
+        import qrcode
+    qr = qrcode.QRCode(border=1, box_size=10)
+    qr.add_data(link)
+    qr.make(fit=True)
+    q = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    q = q.resize((int(lado), int(lado)), Image.NEAREST)
+    pad = int(lado * 0.08)
+    fnt = fonte("bold", int(lado * 0.11))
+    alt_txt = int(fnt.size * 1.6)
+    card = Image.new("RGBA", (q.width + 2 * pad, q.height + 2 * pad + alt_txt), (0, 0, 0, 0))
+    d = ImageDraw.Draw(card)
+    d.rounded_rectangle([0, 0, card.width - 1, card.height - 1], radius=pad,
+                        fill=(255, 255, 255, 255))
+    card.paste(q, (pad, pad))
+    d.text((card.width / 2, q.height + pad + alt_txt / 2 + pad * 0.3), "Fale no WhatsApp",
+           font=fnt, fill=(22, 163, 74, 255), anchor="mm")
+    return card
+
+
+def imagem_digito(texto, tema, lado):
+    img = Image.new("RGBA", (int(lado * 1.9), int(lado)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    cor = cor_destaque(tema)
+    d.rounded_rectangle([0, 0, img.width - 1, img.height - 1], radius=int(lado * 0.22),
+                        fill=cor + (255,))
+    fnt = fonte("bold", int(lado * (0.62 if len(texto) <= 2 else 0.36)))
+    d.text((img.width / 2, img.height / 2), texto, font=fnt, fill=cor_contraste(cor) + (255,),
+           anchor="mm")
+    return img
+
+
+def aplicar_transicao(a, b, m, tipo, W, H, semente=0):
+    """Mistura o fim de uma cena (a) com o começo da próxima (b). m vai de 0 a 1."""
+    if tipo == "Flash":
+        base = a if m < 0.5 else b
+        w = (1 - abs(2 * m - 1)) ** 1.5
+        return base * (1 - w) + 255.0 * w
+    if tipo == "Zoom rápido":
+        if m < 0.5:
+            fr, z = a, 1 + 0.9 * suave(m * 2)
+        else:
+            fr, z = b, 1 + 0.9 * (1 - suave((m - 0.5) * 2))
+        im = Image.fromarray(fr.clip(0, 255).astype(np.uint8))
+        ww, hh = W / z, H / z
+        im = im.resize((W, H), Image.BILINEAR,
+                       box=((W - ww) / 2, (H - hh) / 2, (W + ww) / 2, (H + hh) / 2))
+        out = np.asarray(im, dtype=np.float32)
+        w = 1 - abs(2 * m - 1)
+        return out * (1 - 0.25 * w) + 255.0 * 0.25 * w
+    if tipo == "Deslizar":
+        off = int(W * suave(m))
+        out = np.empty_like(a)
+        out[:, :W - off] = a[:, off:]
+        out[:, W - off:] = b[:, :off]
+        return out
+    if tipo == "Tremida (glitch)":
+        base = (a if m < 0.5 else b).copy()
+        amp = int((1 - abs(2 * m - 1)) * W * 0.04)
+        if amp <= 0:
+            return base
+        rnd = np.random.default_rng(semente + int(m * 100))
+        dx = int(rnd.integers(-amp, amp + 1))
+        out = base.copy()
+        out[..., 0] = np.roll(base[..., 0], dx, axis=1)
+        out[..., 2] = np.roll(base[..., 2], -dx, axis=1)
+        for _ in range(5):
+            y0 = int(rnd.integers(0, H - 20))
+            alt = int(rnd.integers(8, max(9, H // 18)))
+            out[y0:y0 + alt] = np.roll(out[y0:y0 + alt], int(rnd.integers(-amp * 2, amp * 2 + 1)),
+                                       axis=1)
+        return out
+    return a * (1 - m) + b * m  # Suave (fundido)
 
 
 # ---------------- áudio ----------------
@@ -943,20 +1233,34 @@ def _voz_google(texto, acelerar, tom=0.0):
     return decodificar_audio(buf.getvalue(), acelerar=acelerar, tom=tom)
 
 
-def _voz_microsoft(texto, voz, velocidade):
-    """Devolve (audio, erro)."""
+def _voz_microsoft(texto, voz, velocidade, palavras=None):
+    """Devolve (audio, erro). Se 'palavras' for uma lista, ela recebe
+    (início_s, fim_s, palavra) de cada palavra falada — usado nas legendas."""
     if edge_tts is None:
         return None, "a biblioteca edge-tts não está instalada no servidor"
     if time.time() < ESTADO_VOZ["fora_ate"]:  # falhou há pouco: não espera de novo
         return None, ESTADO_VOZ["ultimo_erro"]
 
     def baixar():
-        com = edge_tts.Communicate(texto, voz, rate=velocidade,
-                                   connect_timeout=6, receive_timeout=20)
-        return b"".join(p["data"] for p in com.stream_sync() if p.get("type") == "audio")
+        try:
+            com = edge_tts.Communicate(texto, voz, rate=velocidade, boundary="WordBoundary",
+                                       connect_timeout=6, receive_timeout=20)
+        except TypeError:  # versões antigas já mandam as palavras por padrão
+            com = edge_tts.Communicate(texto, voz, rate=velocidade,
+                                       connect_timeout=6, receive_timeout=20)
+        partes, pals = [], []
+        for p in com.stream_sync():
+            if p.get("type") == "audio":
+                partes.append(p["data"])
+            elif p.get("type") == "WordBoundary":
+                ini = p.get("offset", 0) / 1e7
+                pals.append((ini, ini + p.get("duration", 0) / 1e7, p.get("text", "")))
+        return b"".join(partes), pals
     ex = ThreadPoolExecutor(max_workers=1)
     try:
-        dados = ex.submit(baixar).result(timeout=30)  # nunca deixa o app travado
+        dados, pals = ex.submit(baixar).result(timeout=30)  # nunca deixa o app travado
+        if palavras is not None:
+            palavras[:] = pals
     except Exception as e:
         nome = "tempo esgotado" if type(e).__name__ == "TimeoutError" else type(e).__name__
         erro = f"{nome}: {str(e)[:160]}".rstrip(": ")
@@ -972,21 +1276,45 @@ def _voz_microsoft(texto, voz, velocidade):
     return audio, ""
 
 
-def narrar(texto, voz=None, velocidade="+0%"):
-    """Grava a fala com a voz escolhida. Se a da Microsoft falhar, usa uma reserva
-    diferente para cada voz e registra o motivo em ESTADO_VOZ."""
+def estimar_tempos(texto, duracao):
+    """Quando a voz não informa o tempo das palavras, estima pelo tamanho de cada palavra."""
+    palavras = texto.split()
+    if not palavras or duracao <= 0:
+        return []
+    util = max(0.3, duracao - 0.15)
+    pesos = [len(w) + 2 + (3 if w[-1] in ".,!?;:" else 0) for w in palavras]
+    total, t, saida = float(sum(pesos)), 0.05, []
+    for w, pz in zip(palavras, pesos):
+        d = util * pz / total
+        saida.append((t, t + d * 0.92, w))
+        t += d
+    return saida
+
+
+def narrar_tempos(texto, voz=None, velocidade="+0%"):
+    """Grava a fala e devolve (audio, [(início, fim, palavra), ...])."""
     if not texto or not texto.strip():
-        return None
+        return None, []
     if voz == "MINHA_VOZ":
         voz = None
     if voz:
-        audio, erro = _voz_microsoft(texto, voz, velocidade)
+        pals = []
+        audio, erro = _voz_microsoft(texto, voz, velocidade, pals)
         if audio is not None:
-            return audio
+            return audio, (pals or estimar_tempos(texto, len(audio) / SR))
         ESTADO_VOZ["reserva"] = True
         ESTADO_VOZ["erro"] = erro
     acelerar = {"+0%": 1.1, "+10%": 1.22, "+20%": 1.35}.get(velocidade, 1.1)
-    return _voz_google(texto, acelerar, TOM_RESERVA.get(voz, 0.0))
+    audio = _voz_google(texto, acelerar, TOM_RESERVA.get(voz, 0.0))
+    if audio is None:
+        return None, []
+    return audio, estimar_tempos(texto, len(audio) / SR)
+
+
+def narrar(texto, voz=None, velocidade="+0%"):
+    """Grava a fala com a voz escolhida. Se a da Microsoft falhar, usa uma reserva
+    diferente para cada voz e registra o motivo em ESTADO_VOZ."""
+    return narrar_tempos(texto, voz, velocidade)[0]
 
 
 def preparar_voz_propria(dados):
@@ -1042,12 +1370,21 @@ def sintetizar_musica(duracao, estilo, semente=7):
     rnd = np.random.default_rng(semente)
     maior = [[48, 52, 55], [43, 47, 50], [45, 48, 52], [41, 45, 48]]  # C G Am F
     menor = [[45, 48, 52], [41, 45, 48], [48, 52, 55], [43, 47, 50]]  # Am F C G
-    cfg = {
+    setimas = [[48, 52, 55, 59], [45, 48, 52, 55], [41, 45, 48, 52], [43, 47, 50, 53]]  # lo-fi
+    base = dict(baixo=False, palmas=False, crackle=False, abafar=0, bumbo_meio=False)
+    cfg = dict(base, **{
         "Animada": dict(acordes=maior, bpm=116, bateria=True, arpejo=True, pad=0.18),
         "Calma": dict(acordes=maior, bpm=76, bateria=False, arpejo=True, pad=0.28),
         "Épica": dict(acordes=menor, bpm=90, bateria=True, arpejo=False, pad=0.34),
         "Emocional": dict(acordes=menor, bpm=72, bateria=False, arpejo=True, pad=0.26),
-    }[estilo]
+        "Eletrônica": dict(acordes=menor, bpm=124, bateria=True, arpejo=True, pad=0.14,
+                           baixo=True),
+        "Lo-fi": dict(acordes=setimas, bpm=78, bateria=True, arpejo=True, pad=0.30,
+                      crackle=True, abafar=9, bumbo_meio=True),
+        "Motivacional": dict(acordes=maior, bpm=100, bateria=True, arpejo=True, pad=0.26),
+        "Festa": dict(acordes=maior, bpm=128, bateria=True, arpejo=True, pad=0.14,
+                      baixo=True, palmas=True),
+    }.get(estilo, {"acordes": maior, "bpm": 116, "bateria": True, "arpejo": True, "pad": 0.18}))
     batida = 60 / cfg["bpm"]
     compasso = batida * 4
     saida = np.zeros(n, np.float32)
@@ -1073,6 +1410,16 @@ def sintetizar_musica(duracao, estilo, semente=7):
                 som = (np.sin(2 * np.pi * f * tt) + 0.25 * np.sin(4 * np.pi * f * tt)) * np.exp(-tt * 6) * 0.12
                 fim = min(len(seg), ini + len(som))
                 seg[ini:fim] += som[:fim - ini]
+        if cfg["baixo"]:  # baixo pulsante em colcheias
+            passo = batida / 2
+            for j in range(int(compasso / passo)):
+                ini = int(j * passo * SR)
+                tt = np.arange(int(passo * 0.9 * SR)) / SR
+                f = nota(acorde[0] - 12)
+                onda = np.sign(np.sin(2 * np.pi * f * tt)) * 0.5 + np.sin(2 * np.pi * f * tt) * 0.5
+                som = onda * np.exp(-tt * 7) * 0.16
+                fim = min(len(seg), ini + len(som))
+                seg[ini:fim] += som[:fim - ini]
         if cfg["bateria"]:
             for j in range(4):
                 ini = int(j * batida * SR)
@@ -1080,7 +1427,14 @@ def sintetizar_musica(duracao, estilo, semente=7):
                 freq = 45 + 90 * np.exp(-tt * 30)
                 bumbo = np.sin(2 * np.pi * np.cumsum(freq) / SR) * np.exp(-tt * 9) * 0.55
                 fim = min(len(seg), ini + len(bumbo))
-                seg[ini:fim] += bumbo[:fim - ini]
+                if not cfg["bumbo_meio"] or j in (0, 2):
+                    seg[ini:fim] += bumbo[:fim - ini]
+                if cfg["palmas"] and j in (1, 3):
+                    tp = np.arange(int(0.12 * SR)) / SR
+                    palma = np.diff(rnd.standard_normal(len(tp) + 1)).astype(np.float32)
+                    palma *= (np.exp(-tp * 35) + 0.6 * np.exp(-np.maximum(0, tp - 0.012) * 35)) * 0.16
+                    fimp = min(len(seg), ini + len(palma))
+                    seg[ini:fimp] += palma[:fimp - ini]
                 ini2 = int((j + 0.5) * batida * SR)
                 tt2 = np.arange(int(0.06 * SR)) / SR
                 ruido = np.diff(rnd.standard_normal(len(tt2) + 1)).astype(np.float32)
@@ -1092,12 +1446,69 @@ def sintetizar_musica(duracao, estilo, semente=7):
         saida[pos:fim] += seg[:fim - pos]
         pos += len(seg)
         k += 1
+    if cfg["abafar"]:  # som abafado, típico do lo-fi
+        k = int(cfg["abafar"])
+        saida = np.convolve(saida, np.ones(k, np.float32) / k, mode="same").astype(np.float32)
+    if cfg["crackle"]:  # chiado de vinil
+        estalos = (rnd.random(n) > 0.9993).astype(np.float32) * rnd.uniform(-1, 1, n)
+        saida += (np.convolve(estalos, np.ones(6) / 6, mode="same") * 0.5
+                  + rnd.standard_normal(n) * 0.004).astype(np.float32)
     fade_in, fade_out = int(0.8 * SR), int(1.6 * SR)
     saida[:fade_in] *= np.linspace(0, 1, min(fade_in, n))[:len(saida[:fade_in])]
     if n > fade_out:
         saida[-fade_out:] *= np.linspace(1, 0, fade_out)
     pico = np.abs(saida).max() or 1
     return saida / pico
+
+
+def som_whoosh(dur=0.5, semente=1):
+    """Som de 'vento' rápido para as transições."""
+    rnd = np.random.default_rng(semente)
+    n = int(dur * SR)
+    ruido = rnd.standard_normal(n).astype(np.float32)
+    grave = np.convolve(ruido, np.ones(40) / 40, mode="same")
+    agudo = ruido - np.convolve(ruido, np.ones(6) / 6, mode="same")
+    t = np.linspace(0, 1, n)
+    varre = np.sin(np.pi * t) ** 2
+    som = grave * (1 - varre) + agudo * varre * 0.6
+    env = np.sin(np.pi * t) ** 1.5
+    return (som * env / (np.abs(som * env).max() + 1e-6) * 0.6).astype(np.float32)
+
+
+def som_ding():
+    """Sininho para o selo de oferta."""
+    tt = np.arange(int(0.9 * SR)) / SR
+    som = (np.sin(2 * np.pi * 1318.5 * tt) + 0.6 * np.sin(2 * np.pi * 1975.5 * tt)
+           + 0.25 * np.sin(2 * np.pi * 2637 * tt)) * np.exp(-tt * 5)
+    return (som / np.abs(som).max() * 0.5).astype(np.float32)
+
+
+def som_tic():
+    """Tique curto para a contagem regressiva."""
+    tt = np.arange(int(0.06 * SR)) / SR
+    return (np.sin(2 * np.pi * 1000 * tt) * np.exp(-tt * 70) * 0.55).astype(np.float32)
+
+
+def som_palmas(dur=2.2, semente=5):
+    """Aplausos para o cartão final."""
+    rnd = np.random.default_rng(semente)
+    n = int(dur * SR)
+    saida = np.zeros(n, np.float32)
+    tp = np.arange(int(0.03 * SR)) / SR
+    for _ in range(int(dur * 32)):
+        ini = int(rnd.uniform(0, dur - 0.05) * SR)
+        palma = rnd.standard_normal(len(tp)).astype(np.float32) * np.exp(-tp * 120)
+        saida[ini:ini + len(palma)] += palma * rnd.uniform(0.3, 1.0)
+    saida = np.convolve(saida, np.ones(3) / 3, mode="same")
+    env = np.minimum(1, np.linspace(0, 4, n)) * np.minimum(1, np.linspace(3, 0, n))
+    return (saida * env / (np.abs(saida).max() + 1e-6) * 0.35).astype(np.float32)
+
+
+def misturar(mix, som, t, volume=1.0):
+    ini = int(max(0, t) * SR)
+    fim = min(len(mix), ini + len(som))
+    if fim > ini:
+        mix[ini:fim] += som[:fim - ini] * volume
 
 
 def salvar_wav(caminho, audio):
@@ -1116,7 +1527,9 @@ def salvar_wav(caminho, audio):
 def criar_video_gratis(cenas, opc, fotos, progresso):
     """
     cenas: lista de dicts {texto_tela, narracao, imagem}
-    opc: produto, cta, contato, formato, tema, estilo_img, fonte_img, musica, narracao(bool), dur_min
+    opc: produto, cta, contato, formato, tema, fonte_img, musica, narracao(bool), dur_min,
+         e os extras: legendas, anim_texto, transicao, efeitos, selo, contagem, logo_bytes,
+         whatsapp. Ao terminar, opc['_capa'] recebe a capa (PNG) para o post.
     fotos: lista de PIL (fotos do usuário)
     progresso(pct, texto)
     """
@@ -1131,8 +1544,9 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
     T = 0.5  # transição
     caminhos_fontes()
 
-    # 1) narração
+    # 1) narração (com o tempo de cada palavra, para as legendas)
     narracoes = [None] * (len(cenas) + 1)
+    tempos = [[] for _ in range(len(cenas) + 1)]
     voz_propria = None
     if opc["narracao"] and opc.get("audio_proprio"):
         progresso(4, "Preparando a sua gravação…")
@@ -1150,13 +1564,17 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
             ESTADO_VOZ["reserva"] = False
             try:
                 with ThreadPoolExecutor(max_workers=4) as ex:
-                    narracoes = list(ex.map(lambda t: narrar(t, voz, vel) if t else None, textos))
+                    res = list(ex.map(lambda t: narrar_tempos(t, voz, vel) if t else (None, []),
+                                      textos))
+                narracoes = [r[0] for r in res]
+                tempos = [r[1] for r in res]
             except Exception as e:
                 st.warning(f"Não foi possível gerar a narração agora ({e}). Seguindo sem voz.")
                 narracoes = [None] * (len(cenas) + 1)
             if voz and ESTADO_VOZ["reserva"]:
                 st.info("As vozes da Microsoft não responderam agora, então usei a versão "
                         f"reserva desta voz. (Motivo: {ESTADO_VOZ['erro'] or 'desconhecido'})")
+    legendas = bool(opc.get("legendas")) and any(tempos[i] for i in range(len(cenas)))
 
     # 2) durações
     duracoes = []
@@ -1169,6 +1587,8 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         n = len(cenas)
         por_cena = max(opc["dur_min"], (len(voz_propria) / SR + 1.0 - 3.6) / n + 0.5)
         duracoes = [por_cena] * n + [3.6]
+    if opc.get("contagem"):
+        duracoes[-1] = max(duracoes[-1], 4.8)
 
     # 3) vídeos de fundo / imagens
     imagens = [None] * len(cenas)
@@ -1249,13 +1669,26 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
     # 4) cenas prontas
     progresso(30, "Montando as cenas…")
     marca = camada_marca(W, H, tema, opc["produto"])
+    logo_peq = logo_grande = None
+    if opc.get("logo_bytes"):
+        try:
+            logo_peq = preparar_logo(io.BytesIO(opc["logo_bytes"]), W * 0.24, H * 0.075)
+            logo_grande = preparar_logo(io.BytesIO(opc["logo_bytes"]), W * 0.5, H * 0.13)
+            m = int(min(W, H) * 0.045)
+            marca.alpha_composite(logo_peq, (W - m - logo_peq.width, m))
+        except Exception:
+            st.info("Não consegui ler o arquivo do logo; o vídeo segue sem ele.")
     marca_arr = para_arrays(marca)
     yy = np.linspace(0, 1, H, dtype=np.float32)[:, None, None]
     if tema["layout"] == "centro":
         sombra = (0.42 + 0.18 * np.abs(yy - 0.5) * 2).astype(np.float32)
     else:
         sombra = (np.clip((yy - 0.45) / 0.55, 0, 1) ** 1.3 * 0.62 + 0.06).astype(np.float32)
+    if legendas:  # escurece também a faixa da legenda
+        sombra = np.maximum(sombra, (np.exp(-((yy - 0.70) / 0.12) ** 2) * 0.45).astype(np.float32))
     sombra = np.broadcast_to(sombra, (H, 1, 1))
+    anim = opc.get("anim_texto") or "Subir suave"
+    selo_img = imagem_selo(opc["selo"], tema, W) if opc.get("selo") else None
 
     blocos = []
     inicio = 0.0
@@ -1265,19 +1698,89 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         else:
             img = imagens[i] if imagens[i] is not None else arte_fundo(W, H, tema, i * 31 + 5)
             base = ImageOps.fit(img.convert("RGB"), (int(W * S), int(H * S)), Image.LANCZOS)
+        txt = cena.get("texto_tela", "")
         blocos.append(dict(base=base, video=videos[i], fonte=None,
                            dur=duracoes[i], inicio=inicio, zoom_in=(i % 2 == 0),
-                           pan=((-1) ** i * 0.6, (-1) ** (i // 2) * 0.4),
-                           texto=para_arrays(camada_texto_cena(W, H, tema, cena.get("texto_tela", ""))),
-                           sombra=True, marca=True))
+                           pan=((-1) ** i * 0.6, (-1) ** (i // 2) * 0.4), txt=txt,
+                           texto=para_arrays(camada_texto_cena(W, H, tema, txt, topo=legendas)),
+                           sombra=True, marca=True, cena=True))
         inicio += duracoes[i] - T
     foto_final = next((im for im in imagens if im is not None), None)
-    fundo, cam_cta = fundo_cta(W, H, tema, opc["produto"], opc.get("cta", ""),
-                               opc.get("contato", ""), foto_final)
+    qr_img = None
+    link = link_whatsapp(opc.get("whatsapp"), opc["produto"])
+    if link:
+        qr_img = imagem_qr(link, W * 0.32)
+    fundo, cam_cta, extras = fundo_cta(W, H, tema, opc["produto"], opc.get("cta", ""),
+                                       opc.get("contato", ""), foto_final, logo=logo_grande,
+                                       qr=qr_img, contagem=bool(opc.get("contagem")))
     blocos.append(dict(base=fundo, video=None, fonte=None,
-                       dur=duracoes[-1], inicio=inicio, zoom_in=True, pan=(0, 0),
-                       texto=para_arrays(cam_cta), sombra=False, marca=False))
+                       dur=duracoes[-1], inicio=inicio, zoom_in=True, pan=(0, 0), txt="",
+                       texto=para_arrays(cam_cta), sombra=False, marca=False, cena=False))
     total = inicio + duracoes[-1]
+
+    # legendas: blocos de até 3 palavras com o tempo exato de cada uma no vídeo
+    trechos = []
+    if legendas:
+        for i in range(len(cenas)):
+            ini_voz = blocos[i]["inicio"] + 0.3
+            for g in grupos_legenda(tempos[i]):
+                pals = [(ini_voz + a0, ini_voz + a1, w) for a0, a1, w in g]
+                trechos.append(pals)
+    cache_leg = {}
+
+    def blend(arr, camada, alfa=1.0):
+        rgb, a, y0, y1 = camada
+        af = a * alfa
+        arr[y0:y1] = arr[y0:y1] * (1 - af) + rgb * af
+
+    def texto_animado(arr, b, tl):
+        rgb, a, y0, y1 = b["texto"]
+        if not b["cena"] or anim == "Subir suave":
+            f = suave((tl - 0.25) / 0.55)
+            if f > 0:
+                dy = int((1 - f) * H * 0.035)
+                y0d, y1d = min(H, y0 + dy), min(H, y1 + dy)
+                k = y1d - y0d
+                if k > 0:
+                    af = a[:k] * f
+                    arr[y0d:y1d] = arr[y0d:y1d] * (1 - af) + rgb[:k] * af
+            return
+        if anim == "Máquina de escrever" and b["txt"]:
+            n = len(b["txt"])
+            prog = (tl - 0.2) / min(1.6, 0.05 * n + 0.2)
+            if prog < 1:
+                kch = max(0, int(n * prog))
+                cache = b.setdefault("_tw", {})
+                if kch not in cache:
+                    cache.clear()
+                    cache[kch] = para_arrays(camada_texto_cena(W, H, tema, b["txt"],
+                                                               topo=legendas, limite=kch))
+                if cache[kch]:
+                    blend(arr, cache[kch])
+                return
+            blend(arr, b["texto"])
+            return
+        if anim == "Pop (pulo)":
+            sc = escala_pop(tl - 0.2)
+            if sc >= 0.999 and tl - 0.2 >= 0.38:
+                blend(arr, b["texto"])
+                return
+            if "_banda" not in b:
+                b["_banda"] = Image.fromarray(np.dstack([rgb, a * 255]).clip(0, 255)
+                                              .astype(np.uint8), "RGBA")
+            colar_rgba(arr, b["_banda"], W / 2, (y0 + y1) / 2, sc, min(1.0, sc * 1.6))
+            return
+        if anim == "Deslizar da lateral":
+            f = suave((tl - 0.15) / 0.5)
+            if f <= 0:
+                return
+            dx = int(-(1 - f) * W * 0.7)
+            if dx >= 0:
+                blend(arr, b["texto"], 1.0)
+                return
+            src, dst = slice(-dx, W), slice(0, W + dx)
+            af = a[:, src] * f
+            arr[y0:y1, dst] = arr[y0:y1, dst] * (1 - af) + rgb[:, src] * af
 
     def quadro_cena(b, tl):
         p = max(0.0, min(1.0, tl / b["dur"]))
@@ -1297,19 +1800,65 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         if b["sombra"]:
             arr = arr * (1 - sombra)
         if b["marca"] and marca_arr:
-            rgb, a, y0, y1 = marca_arr
-            arr[y0:y1] = arr[y0:y1] * (1 - a) + rgb * a
+            blend(arr, marca_arr)
         if b["texto"]:
-            rgb, a, y0, y1 = b["texto"]
-            f = suave((tl - 0.25) / 0.55)
-            if f > 0:
-                dy = int((1 - f) * H * 0.035)
-                y0d, y1d = min(H, y0 + dy), min(H, y1 + dy)
-                k = y1d - y0d
-                if k > 0:
-                    af = a[:k] * f
-                    arr[y0d:y1d] = arr[y0d:y1d] * (1 - af) + rgb[:k] * af
+            texto_animado(arr, b, tl)
         return arr
+
+    def selo_no_quadro(arr, b, tl):
+        if selo_img is None:
+            return
+        if b["cena"]:
+            sc = escala_pop(tl - 0.45)
+            if tl - 0.45 > 0.38:
+                sc = 1 + 0.035 * math.sin(2 * math.pi * 1.3 * tl)
+            colar_rgba(arr, selo_img, W * 0.76, H * 0.40, sc)
+        elif logo_grande is None:
+            sc = escala_pop(tl - 0.5) * 0.62
+            colar_rgba(arr, selo_img, W * 0.80, H * 0.11, sc)
+
+    digitos = []
+    if extras.get("contagem"):
+        _, _, lado = extras["contagem"]
+        digitos = [imagem_digito(x, tema, lado) for x in ("3", "2", "1", "JÁ!")]
+    PASSO = 0.9
+
+    def contagem_no_quadro(arr, tl):
+        if not digitos:
+            return
+        cx, cy, _ = extras["contagem"]
+        tt = tl - 0.3
+        if tt < 0:
+            return
+        k = min(3, int(tt / PASSO))
+        colar_rgba(arr, digitos[k], cx, cy, escala_pop(tt - k * PASSO, 0.3))
+
+    def legenda_no_quadro(arr, t):
+        if not trechos:
+            return
+        for idx, pals in enumerate(trechos):
+            fim = pals[-1][1] + 0.25
+            if idx + 1 < len(trechos):
+                fim = min(fim, trechos[idx + 1][0][0])
+            if pals[0][0] - 0.05 <= t < fim:
+                dest = 0
+                for j, w in enumerate(pals):
+                    if w[0] <= t:
+                        dest = j
+                chave = (idx, dest)
+                if chave not in cache_leg:
+                    if len(cache_leg) > 6:
+                        cache_leg.clear()
+                    cache_leg[chave] = camada_legenda(W, H, tema, pals, dest)
+                if cache_leg[chave]:
+                    blend(arr, cache_leg[chave])
+                return
+
+    tipos_variados = ["Zoom rápido", "Deslizar", "Flash", "Tremida (glitch)", "Suave (fundido)"]
+
+    def tipo_transicao(k):
+        t_opc = opc.get("transicao") or "Suave (fundido)"
+        return tipos_variados[(k - 1) % len(tipos_variados)] if t_opc.startswith("Variada") else t_opc
 
     # 5) áudio
     progresso(35, "Compondo a trilha sonora…")
@@ -1328,7 +1877,20 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         fim = min(len(mix), ini + len(v))
         if fim > ini:
             mix[ini:fim] += v[:fim - ini] * 0.95
-    tem_audio = tem_voz or opc["musica"] != "Sem música"
+    if opc.get("efeitos"):
+        vol = 0.45 if tem_voz else 0.75
+        whoosh = som_whoosh()
+        for k in range(1, len(blocos)):
+            misturar(mix, whoosh, blocos[k]["inicio"] - 0.05, vol)
+        if selo_img is not None:
+            misturar(mix, som_ding(), blocos[0]["inicio"] + 0.5, vol * 0.8)
+        cta_ini = blocos[-1]["inicio"]
+        if digitos:
+            for k in range(3):
+                misturar(mix, som_tic(), cta_ini + 0.3 + k * PASSO, vol)
+            misturar(mix, som_ding(), cta_ini + 0.3 + 3 * PASSO, vol * 0.8)
+        misturar(mix, som_palmas(min(2.4, blocos[-1]["dur"])), cta_ini + 0.4, vol * 0.9)
+    tem_audio = tem_voz or opc["musica"] != "Sem música" or bool(opc.get("efeitos"))
 
     pasta = tempfile.mkdtemp(prefix="appvideo_")
     caminho_wav = os.path.join(pasta, "audio.wav")
@@ -1350,11 +1912,18 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         for q in range(n_quadros):
             t = q / FPS
             ativos = [b for b in blocos if b["inicio"] <= t < b["inicio"] + b["dur"]] or [blocos[-1]]
+            atual = ativos[-1]
             quadro = quadro_cena(ativos[0], t - ativos[0]["inicio"])
             if len(ativos) > 1:
                 prox = ativos[1]
                 mistura = suave((t - prox["inicio"]) / T)
-                quadro = quadro * (1 - mistura) + quadro_cena(prox, t - prox["inicio"]) * mistura
+                quadro = aplicar_transicao(quadro, quadro_cena(prox, t - prox["inicio"]), mistura,
+                                           tipo_transicao(blocos.index(prox)), W, H,
+                                           semente=blocos.index(prox))
+            selo_no_quadro(quadro, atual, t - atual["inicio"])
+            if not atual["cena"]:
+                contagem_no_quadro(quadro, t - atual["inicio"])
+            legenda_no_quadro(quadro, t)
             gerador.send(np.ascontiguousarray(quadro.clip(0, 255).astype(np.uint8)))
             for b in blocos:
                 if b["fonte"] is not None and t >= b["inicio"] + b["dur"]:
@@ -1366,6 +1935,21 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         for b in blocos:
             if b["fonte"] is not None:
                 b["fonte"].fechar()
+
+    # capa para o post: primeira cena com o texto completo e o selo
+    try:
+        b0 = blocos[0]
+        tl = min(b0["dur"] * 0.8, 2.6)
+        b0.pop("_tw", None)
+        capa = quadro_cena(b0, tl) if b0["video"] is None else None
+        if capa is not None:
+            if selo_img is not None:
+                colar_rgba(capa, selo_img, W * 0.76, H * 0.40, 1.0)
+            buf = io.BytesIO()
+            Image.fromarray(capa.clip(0, 255).astype(np.uint8)).save(buf, "PNG")
+            opc["_capa"] = buf.getvalue()
+    except Exception:
+        opc["_capa"] = None
 
     with open(caminho_mp4, "rb") as f:
         dados = f.read()
@@ -1383,7 +1967,33 @@ def extrair_json(texto):
         raise
 
 
-def gerar_roteiro(produto, descricao, publico, tom, n, cta, contato):
+MODELOS_ANUNCIO = {
+    "Livre (a IA decide)": "",
+    "Promoção relâmpago": "Formato PROMOÇÃO RELÂMPAGO: urgência desde a primeira cena, destaque o "
+        "benefício da oferta, reforce que é por tempo limitado e termine com chamada para agir agora.",
+    "Inauguração / novidade": "Formato INAUGURAÇÃO: anuncie a novidade com entusiasmo, mostre o que o "
+        "cliente vai encontrar e convide para conhecer.",
+    "Cardápio do dia": "Formato CARDÁPIO DO DIA: cada cena apresenta um item ou destaque do dia, com "
+        "descrição que dá água na boca, e a última cena chama para pedir.",
+    "3 motivos para comprar": "Formato 3 MOTIVOS: primeira cena é o gancho ('3 motivos para…'), as "
+        "cenas seguintes trazem um motivo cada (Motivo 1, 2, 3) e a última chama para comprar.",
+    "Antes e depois": "Formato ANTES E DEPOIS: comece mostrando o problema (antes), depois a "
+        "transformação com o produto/serviço (depois) e termine com a chamada.",
+    "Depoimento de cliente": "Formato DEPOIMENTO: as falas soam como um cliente satisfeito contando "
+        "sua experiência em primeira pessoa, de forma natural, sem exageros nem números inventados.",
+    "Lançamento de produto": "Formato LANÇAMENTO: crie expectativa, revele o produto, mostre o "
+        "diferencial principal e chame para garantir o seu.",
+    "Pergunta + solução": "Formato PERGUNTA E SOLUÇÃO: a primeira cena faz uma pergunta que o "
+        "público se identifica, as do meio apresentam a solução e a última chama para agir.",
+}
+ANGULOS_VERSOES = {
+    "🎯 Direta": "Seja direto e objetivo, focado na oferta e no benefício principal.",
+    "❤️ Emocional": "Conte uma pequena história emocional com a qual o público se identifique.",
+    "😄 Divertida": "Use humor leve e linguagem descontraída de redes sociais, sem perder a clareza.",
+}
+
+
+def gerar_roteiro(produto, descricao, publico, tom, n, cta, contato, modelo="", angulo=""):
     sistema = (
         "Você é redator publicitário brasileiro e diretor de arte. Crie um roteiro de anúncio em "
         f"vídeo curto com exatamente {n} cenas. Responda APENAS com JSON neste formato: "
@@ -1394,13 +2004,15 @@ def gerar_roteiro(produto, descricao, publico, tom, n, cta, contato):
         '"cta":"chamada final curta, no máximo 6 palavras",'
         f'"categoria":"uma destas: {" | ".join(BANCO_CATEGORIAS)}"}}. '
         "A primeira cena é um gancho que prende a atenção, as do meio mostram benefícios e a "
-        "última reforça a oferta. Não invente preços nem promoções que não foram informados."
+        "última reforça a oferta. Não invente preços nem promoções que não foram informados. "
+        + (MODELOS_ANUNCIO.get(modelo, "") + " " if modelo else "")
+        + (angulo or "")
     )
     usuario = (f"Produto/serviço: {produto}\nDetalhes: {descricao or '-'}\nPúblico: {publico or '-'}\n"
                f"Tom: {tom}\nCTA desejado: {cta or 'crie um'}\nContato: {contato or '-'}")
     dados = extrair_json(chat_groq([{"role": "system", "content": sistema},
                                     {"role": "user", "content": usuario}],
-                                   json_mode=True, temperatura=0.8))
+                                   json_mode=True, temperatura=0.9 if angulo else 0.8))
     cenas = []
     for c in dados.get("cenas", [])[:n]:
         cenas.append({"texto_tela": str(c.get("texto_tela", ""))[:80],
@@ -1452,7 +2064,8 @@ st.markdown(
 for k, v in {"logado": False, "nome": "", "groq_key": "", "xai_key": "",
              "modelos_groq": MODELOS_GROQ_PREFERIDOS, "modelo_chat": MODELOS_GROQ_PREFERIDOS[0],
              "chat": [], "galeria": [], "cenas": [], "cta_gerado": "",
-             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "categoria_ia": "", "audio_proprio": None, "rodada": 0, "fal_key": ""}.items():
+             "ultimo_gratis": None, "ultimo_pro": None, "pexels_key": "", "versoes": [],
+             "roteiro_v": 0, "categoria_ia": "", "audio_proprio": None, "rodada": 0, "fal_key": ""}.items():
     st.session_state.setdefault(k, v)
 
 
@@ -1665,7 +2278,10 @@ def painel_estudio(miniaturas, textos, produto, cta, contato, tema, dur):
              "acc2": cor(TEMAS[tema]["c2"]) if sum(TEMAS[tema]["c2"]) < 600 else "#312e81"}
     html = (PAINEL_HTML.replace("__DADOS__", json.dumps(dados))
             .replace("__ACC__", dados["acc"]).replace("__ACC2__", dados["acc2"]))
-    components.html(html, height=840, scrolling=False)
+    if hasattr(st, "iframe"):  # forma nova do Streamlit
+        st.iframe(html, height=840)
+    else:
+        components.html(html, height=840, scrolling=False)
 
 
 def _alternar_foto(pasta, i):
@@ -1729,6 +2345,7 @@ def novo_anuncio(prefixo):
         st.session_state.categoria_ia = ""
         st.session_state.fotos_banco = []
         st.session_state.audio_proprio = None
+        st.session_state.versoes = []
     else:
         st.session_state.ultimo_pro = None
         st.session_state.pop("p_sugestao", None)
@@ -1740,6 +2357,22 @@ def novo_anuncio(prefixo):
 def mostrar_aviso_novo():
     if st.session_state.get("aviso_novo"):
         st.success(st.session_state.pop("aviso_novo"))
+
+
+def gerar_legenda_post(produto, descricao, publico, cta, contato, cenas):
+    """Legenda pronta para Instagram/TikTok + hashtags."""
+    roteiro = " ".join(c.get("narracao", "") for c in cenas)[:600]
+    return chat_groq([
+        {"role": "system", "content":
+         "Você é social media brasileiro. Escreva a legenda de um post de anúncio em vídeo para "
+         "Instagram e TikTok, em português do Brasil: 1) uma primeira linha de impacto; 2) de 2 a 4 "
+         "linhas curtas com benefícios, usando alguns emojis; 3) a chamada para ação com o contato; "
+         "4) uma linha em branco e depois de 8 a 12 hashtags relevantes (misture populares e de "
+         "nicho/local). Não invente preços nem promoções. Responda só com a legenda pronta."},
+        {"role": "user", "content": f"Negócio: {produto}\nDetalhes: {descricao or '-'}\n"
+                                    f"Público: {publico or '-'}\nChamada: {cta or '-'}\n"
+                                    f"Contato: {contato or '-'}\nRoteiro do vídeo: {roteiro}"}],
+        temperatura=0.8)
 
 
 def aba_gratis():
@@ -1761,6 +2394,9 @@ def aba_gratis():
         contato = st.text_input("Contato no final do vídeo", key=f"g_contato_{st.session_state.rodada}",
                                 placeholder="Ex.: (31) 99999-9999 · @brasaviva")
         tom = st.selectbox("Tom do anúncio", TONS, key=f"g_tom_{st.session_state.rodada}")
+        modelo = st.selectbox("Modelo do anúncio", list(MODELOS_ANUNCIO),
+                              key=f"g_modelo_{st.session_state.rodada}",
+                              help="A IA monta o roteiro no formato escolhido.")
     with c2:
         formato = "Vertical 9:16 (Reels/TikTok/Shorts)"
         st.caption("📱 Formato: vertical 9:16 — Reels, TikTok, Shorts e Status.")
@@ -1820,6 +2456,48 @@ def aba_gratis():
                 else:
                     st.warning("Não consegui gerar a amostra agora. Tente de novo em instantes.")
 
+    r = st.session_state.rodada
+    with st.expander("✨ Turbinar o vídeo — legendas, selo de oferta, logo, WhatsApp e efeitos",
+                     expanded=True):
+        t1c, t2c = st.columns(2)
+        with t1c:
+            legendas = st.toggle("💬 Legendas estilo TikTok (palavra por palavra)", value=True,
+                                 key=f"g_leg_{r}",
+                                 help="A frase falada aparece na tela e a palavra dita fica em destaque.")
+            if legendas and narracao and VOZES[voz_nome] == "MINHA_VOZ":
+                st.caption("As legendas automáticas funcionam com as vozes do app. Com a sua "
+                           "própria voz, o vídeo sai sem legenda.")
+            elif legendas and not narracao:
+                st.caption("Ligue a narração para ter legendas.")
+            anim_texto = st.selectbox("Animação do texto", ANIM_TEXTO, key=f"g_anim_{r}")
+            transicao = st.selectbox("Transição entre as cenas", TRANSICOES, key=f"g_trans_{r}")
+            efeitos = st.toggle("🔊 Efeitos sonoros (vento, sininho, aplausos)", value=True,
+                                key=f"g_sfx_{r}")
+        with t2c:
+            tipo_selo = st.selectbox("🏷️ Selo de oferta", SELOS, key=f"g_selo_{r}")
+            selo = ""
+            if tipo_selo == "Preço (R$)":
+                v = st.text_input("Preço", key=f"g_selo_preco_{r}", placeholder="Ex.: 29,90")
+                v = v.strip().replace("R$", "").strip()
+                selo = f"R$ {v}" if v else ""
+            elif tipo_selo == "Desconto (%)":
+                v = st.text_input("Desconto", key=f"g_selo_desc_{r}", placeholder="Ex.: 30")
+                v = v.strip().replace("%", "").replace("-", "").strip()
+                selo = f"-{v}% OFF" if v else ""
+            elif tipo_selo == "Outro texto":
+                selo = st.text_input("Texto do selo (curto)", key=f"g_selo_txt_{r}",
+                                     max_chars=22, placeholder="Ex.: COMBO 2x1").strip()
+            elif tipo_selo != "Sem selo":
+                selo = tipo_selo
+            contagem = st.toggle("⏰ Contagem regressiva no final (3, 2, 1…)", value=False,
+                                 key=f"g_cont_{r}")
+            logo_up = st.file_uploader("🖼️ Logo da empresa (PNG transparente fica melhor)",
+                                       type=["png", "jpg", "jpeg", "webp"], key=f"g_logo_{r}")
+            whatsapp = st.text_input("📱 WhatsApp para o QR code do final", key=f"g_whats_{r}",
+                                     placeholder="Ex.: (31) 99999-9999")
+            if whatsapp and not link_whatsapp(whatsapp):
+                st.caption("Digite só o número com DDD.")
+
     if fonte_img == FONTE_BANCO:
         galeria_banco(f"{produto} {descricao}")
 
@@ -1845,22 +2523,60 @@ def aba_gratis():
     else:
         st.info("Envie suas fotos para ver a prévia do anúncio aqui.")
 
-    if st.button("📝 1. Gerar roteiro com IA", key=f"g_roteiro_{st.session_state.rodada}"):
+    st.session_state.setdefault("roteiro_v", 0)
+    b_rot, b_ver = st.columns(2)
+    if b_rot.button("📝 1. Gerar roteiro com IA", key=f"g_roteiro_{st.session_state.rodada}"):
         if not produto.strip():
             st.warning("Informe o produto ou serviço.")
         else:
             with st.spinner("A IA está escrevendo o roteiro…"):
                 try:
-                    cenas, cta_ia = gerar_roteiro(produto, descricao, publico, tom, n_cenas, cta, contato)
+                    cenas, cta_ia = gerar_roteiro(produto, descricao, publico, tom, n_cenas, cta,
+                                                  contato, modelo)
                     st.session_state.cenas = cenas
                     st.session_state.cta_gerado = cta_ia
+                    st.session_state.roteiro_v += 1
+                    st.session_state.versoes = []
                 except Exception as e:
                     st.error(str(e))
+    if b_ver.button("🎲 Gerar 3 versões para escolher", key=f"g_versoes_{st.session_state.rodada}",
+                    help="Uma direta, uma emocional e uma divertida."):
+        if not produto.strip():
+            st.warning("Informe o produto ou serviço.")
+        else:
+            with st.spinner("A IA está escrevendo 3 versões…"):
+                try:
+                    def _uma(item):
+                        nome, ang = item
+                        c_, cta_ = gerar_roteiro(produto, descricao, publico, tom, n_cenas, cta,
+                                                 contato, modelo, ang)
+                        return nome, c_, cta_
+                    with ThreadPoolExecutor(max_workers=3) as ex:
+                        st.session_state.versoes = list(ex.map(_uma, ANGULOS_VERSOES.items()))
+                except Exception as e:
+                    st.error(str(e))
+    if st.session_state.get("versoes"):
+        st.markdown("**Escolha a versão que mais combina com você:**")
+        cols_v = st.columns(len(st.session_state.versoes))
+        for k, (nome, c_, cta_) in enumerate(st.session_state.versoes):
+            with cols_v[k]:
+                st.markdown(f"**{nome}**")
+                for j, cena in enumerate(c_):
+                    st.caption(f"**{j + 1}. {cena.get('texto_tela', '')}** — {cena.get('narracao', '')}")
+                if cta_:
+                    st.caption(f"👉 {cta_}")
+                if st.button("✅ Usar esta", key=f"g_usar_versao_{k}_{st.session_state.rodada}"):
+                    st.session_state.cenas = c_
+                    st.session_state.cta_gerado = cta_
+                    st.session_state.roteiro_v += 1
+                    st.session_state.versoes = []
+                    st.rerun()
 
     if st.session_state.cenas:
         st.markdown("**Roteiro** — edite à vontade antes de criar o vídeo:")
         editado = st.data_editor(
-            st.session_state.cenas, key=f"g_editor_{st.session_state.rodada}", num_rows="dynamic",
+            st.session_state.cenas, num_rows="dynamic",
+            key=f"g_editor_{st.session_state.rodada}_{st.session_state.roteiro_v}",
             column_config={
                 "texto_tela": st.column_config.TextColumn("Texto na tela", width="medium"),
                 "narracao": st.column_config.TextColumn("Narração", width="large"),
@@ -1888,7 +2604,8 @@ def aba_gratis():
         try:
             if not cenas_finais:
                 barra.progress(2, text="Escrevendo o roteiro com IA…")
-                cenas_finais, cta_ia = gerar_roteiro(produto, descricao, publico, tom, n_cenas, cta, contato)
+                cenas_finais, cta_ia = gerar_roteiro(produto, descricao, publico, tom, n_cenas, cta,
+                                                     contato, modelo)
                 st.session_state.cenas = cenas_finais
                 cta_final = cta or cta_ia
             fotos = [Image.open(f).convert("RGB") for f in (fotos_up or [])]
@@ -1899,10 +2616,17 @@ def aba_gratis():
                        fotos_banco=list(fotos_escolhidas),
                        voz=VOZES[voz_nome], velocidade=VELOCIDADES[velocidade],
                        audio_proprio=(st.session_state.get("audio_proprio")
-                                      if VOZES[voz_nome] == "MINHA_VOZ" else None))
+                                      if VOZES[voz_nome] == "MINHA_VOZ" else None),
+                       legendas=legendas, anim_texto=anim_texto, transicao=transicao,
+                       efeitos=efeitos, selo=selo, contagem=contagem,
+                       logo_bytes=logo_up.getvalue() if logo_up else None, whatsapp=whatsapp)
             dados = criar_video_gratis(cenas_finais, opc, fotos,
                                        lambda p, t: barra.progress(min(100, p), text=t))
-            st.session_state.ultimo_gratis = {"bytes": dados, "titulo": produto.strip()}
+            st.session_state.ultimo_gratis = {
+                "bytes": dados, "titulo": produto.strip(), "capa": opc.get("_capa"),
+                "legenda": "", "info": dict(produto=produto.strip(), descricao=descricao,
+                                            publico=publico, cta=cta_final, contato=contato,
+                                            cenas=cenas_finais)}
             salvar_galeria(produto.strip(), "Grátis", dados=dados)
         except Exception as e:
             barra.empty()
@@ -1920,6 +2644,37 @@ def aba_gratis():
             apagar_video(st.session_state.ultimo_gratis["bytes"])
             st.session_state.ultimo_gratis = None
             st.rerun()
+        kit_postagem(st.session_state.ultimo_gratis)
+
+
+def kit_postagem(video):
+    """Capa, legenda e hashtags prontas para postar."""
+    with st.expander("📦 Kit de postagem — capa, legenda e hashtags", expanded=True):
+        k1, k2 = st.columns([1, 2])
+        with k1:
+            if video.get("capa"):
+                st.image(video["capa"], caption="Capa do post", width=170)
+                st.download_button("⬇️ Baixar capa (PNG)", video["capa"],
+                                   file_name=f"capa_{int(time.time())}.png", mime="image/png",
+                                   key="kit_capa")
+            else:
+                st.caption("A capa fica disponível nos vídeos feitos com fotos.")
+        with k2:
+            if st.button("✍️ Gerar legenda e hashtags", key="kit_legenda"):
+                with st.spinner("Escrevendo a legenda…"):
+                    try:
+                        info = video.get("info") or {}
+                        video["legenda"] = gerar_legenda_post(
+                            info.get("produto", video.get("titulo", "")), info.get("descricao", ""),
+                            info.get("publico", ""), info.get("cta", ""), info.get("contato", ""),
+                            info.get("cenas", []))
+                    except Exception as e:
+                        st.error(str(e))
+            if video.get("legenda"):
+                st.caption("Toque no ícone de copiar (canto do quadro) e cole no seu post:")
+                st.code(video["legenda"], language=None, wrap_lines=True)
+            st.caption("💡 Dica: horários de almoço e começo da noite costumam ter mais movimento "
+                       "nas redes — teste alguns e veja qual funciona melhor para o seu público.")
 
 
 # ---------------- aba profissional ----------------
@@ -2696,6 +3451,300 @@ def aba_galeria():
                 st.rerun()
 
 
+# ---------------- aba "Aprenda a anunciar" ----------------
+MODELOS_BUSCA = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+PESQUISAS_PRONTAS = {
+    "🔥 O que está em alta agora": (
+        "Quais são as tendências e formatos de vídeo que estão em alta AGORA no TikTok, Instagram "
+        "Reels e YouTube Shorts no Brasil para anúncios de {negocio}? Dê exemplos concretos de "
+        "ganchos, formatos e sons/temas em alta."),
+    "🏆 Anúncios que deram certo": (
+        "Quais anúncios e vídeos de {negocio} deram muito certo recentemente no TikTok, Reels e "
+        "YouTube (no Brasil ou no mundo)? Explique POR QUE funcionaram (gancho, formato, oferta) e "
+        "como um pequeno negócio pode adaptar a ideia."),
+    "⚠️ Anúncios que falharam": (
+        "Quais erros fazem anúncios de {negocio} fracassarem em vídeos curtos (TikTok, Reels, "
+        "Shorts)? Traga exemplos e casos recentes e como evitar cada erro."),
+    "🛒 Produtos que mais vendem": (
+        "Quais produtos e categorias estão vendendo mais AGORA no TikTok Shop Brasil e no YouTube "
+        "(Shopping/afiliados)? Traga dados recentes com a data e, se fizer sentido, relacione "
+        "com {negocio}."),
+    "💬 O que os clientes comentam": (
+        "O que os clientes mais comentam, perguntam e reclamam nos comentários de vídeos e "
+        "anúncios de {negocio} nas redes sociais? Liste dúvidas e objeções frequentes e como "
+        "responder a cada uma no próprio anúncio."),
+    "💡 Ideias de anúncio para mim": (
+        "Crie 5 ideias de vídeos curtos de anúncio para {negocio}, baseadas no que está "
+        "funcionando agora nas redes. Para cada ideia: gancho dos 3 primeiros segundos, roteiro "
+        "rápido em 3 a 4 cenas e chamada final."),
+}
+
+
+def limpar_citacoes(texto):
+    """Tira as marcas internas de citação da busca (ex.: 【2†L6-L10】)."""
+    texto = re.sub(r"【[^】]*】", "", texto or "")
+    return re.sub(r"[ \t]+\n", "\n", texto).strip()
+
+
+@st.cache_data(ttl=6 * 60 * 60, show_spinner=False, max_entries=300)
+def _pesquisa_cache(pergunta, dia, chave):
+    """Faz a pesquisa na internet (guarda por 6 h para não repetir a mesma busca)."""
+    sistema = (
+        f"Hoje é {dia}. Você é consultor de marketing para pequenos negócios brasileiros e explica "
+        "de forma simples, para leigos. Use a busca na internet para trazer informações ATUAIS. "
+        "Responda em português do Brasil, organizado em tópicos curtos e práticos. Diga a data ou "
+        "o período dos dados quando houver. No final, liste as fontes com o link de cada uma em "
+        "uma seção 'Fontes:'. Não invente números: se não encontrar, diga que não encontrou.")
+    ultimo = ""
+    for modelo in MODELOS_BUSCA:
+        try:
+            r = requests.post(
+                f"{GROQ_BASE}/chat/completions",
+                headers={"Authorization": f"Bearer {chave}", "Content-Type": "application/json"},
+                json={"model": modelo, "messages": [{"role": "system", "content": sistema},
+                                                    {"role": "user", "content": pergunta}],
+                      "tools": [{"type": "browser_search"}], "tool_choice": "required",
+                      "reasoning_effort": "low", "max_completion_tokens": 3000,
+                      "temperature": 0.6},
+                timeout=150)
+        except requests.RequestException as e:
+            ultimo = str(e)
+            continue
+        if r.status_code == 200:
+            texto = r.json()["choices"][0]["message"].get("content") or ""
+            if texto.strip():
+                return limpar_citacoes(texto), True
+        ultimo = erro_api(r)
+    raise RuntimeError(ultimo or "a pesquisa não respondeu")
+
+
+def pesquisa_ao_vivo(pergunta):
+    """Pesquisa atualizada na internet. Se não der, responde sem busca e avisa.
+    Devolve (texto, ao_vivo)."""
+    dia = time.strftime("%d/%m/%Y")
+    try:
+        return _pesquisa_cache(pergunta, dia, st.session_state.groq_key)
+    except Exception as e:
+        aviso = str(e)
+    texto = chat_groq([
+        {"role": "system", "content": "Você é consultor de marketing para pequenos negócios "
+         "brasileiros. Responda em português do Brasil, em tópicos curtos e práticos, para leigos. "
+         "Deixe claro que é conhecimento geral, sem dados de hoje."},
+        {"role": "user", "content": pergunta}], temperatura=0.6)
+    return texto + f"\n\n_(Pesquisa ao vivo indisponível agora: {aviso[:160]})_", False
+
+
+def analisar_anuncio(texto, negocio):
+    return chat_groq([
+        {"role": "system", "content":
+         "Você é especialista em anúncios de vídeo curto (TikTok, Reels, Shorts) para pequenos "
+         "negócios no Brasil. Analise o roteiro do anúncio e responda em português do Brasil, "
+         "assim:\n"
+         "**Nota geral: X/10**\n"
+         "Depois, uma tabela em markdown com as colunas Critério | Nota (0-10) | Comentário, "
+         "avaliando: Gancho dos 3 primeiros segundos; Clareza da mensagem; Oferta / benefício; "
+         "Chamada para ação; Prova ou confiança; Cara de rede social (não de comercial de TV); "
+         "Tamanho ideal.\n"
+         "Depois: **3 melhorias principais** (bem práticas) e **Versão melhorada do gancho** "
+         "(3 opções de primeira frase). Seja honesto e direto, em linguagem simples."},
+        {"role": "user", "content": f"Negócio: {negocio or '-'}\nRoteiro do anúncio:\n{texto}"}],
+        temperatura=0.4)
+
+
+def aba_aprenda():
+    st.subheader("📈 Aprenda a anunciar")
+    st.caption("Pesquisa ao vivo na internet, análise do seu anúncio e uma cartilha completa "
+               "para quem nunca anunciou.")
+
+    # ---------- pesquisa ao vivo ----------
+    st.markdown("#### 🔎 Pesquisa ao vivo — sempre atualizada")
+    st.caption("Cada consulta pesquisa a internet na hora e traz as fontes. A mesma pergunta "
+               "fica guardada por algumas horas para responder mais rápido.")
+    negocio = st.text_input("Qual é o seu negócio ou produto?", key="ap_negocio",
+                            placeholder="Ex.: pizzaria delivery em Belo Horizonte")
+    cols = st.columns(3)
+    escolhida = None
+    for i, nome in enumerate(PESQUISAS_PRONTAS):
+        if cols[i % 3].button(nome, key=f"ap_btn_{i}", use_container_width=True):
+            escolhida = nome
+    livre = st.text_input("…ou faça sua própria pergunta", key="ap_livre",
+                          placeholder="Ex.: que tipo de vídeo vende mais marmita fitness?")
+    if st.button("🔎 Pesquisar minha pergunta", key="ap_btn_livre") and livre.strip():
+        escolhida = "livre"
+    if escolhida:
+        alvo = negocio.strip() or "pequenos negócios em geral"
+        pergunta = livre.strip() + (f" (Meu negócio: {negocio})" if negocio.strip() else "") \
+            if escolhida == "livre" else PESQUISAS_PRONTAS[escolhida].format(negocio=alvo)
+        with st.spinner("Pesquisando na internet… (pode levar até 1 minuto)"):
+            try:
+                texto, ao_vivo = pesquisa_ao_vivo(pergunta)
+                st.session_state.ap_resultado = {
+                    "titulo": "Sua pergunta" if escolhida == "livre" else escolhida,
+                    "texto": texto, "ao_vivo": ao_vivo, "quando": time.strftime("%d/%m/%Y %H:%M")}
+            except Exception as e:
+                st.error(str(e))
+    res = st.session_state.get("ap_resultado")
+    if res:
+        with st.container(border=True):
+            st.markdown(f"**{res['titulo']}** · "
+                        + (f"🟢 pesquisado na internet em {res['quando']}" if res["ao_vivo"]
+                           else "🟡 sem pesquisa ao vivo (conhecimento geral)"))
+            st.markdown(res["texto"])
+
+    # ---------- análise do anúncio ----------
+    st.markdown("#### 🩺 Analise o seu anúncio")
+    st.caption("Cole o roteiro (ou use o roteiro do vídeo grátis) e receba nota, pontos fracos "
+               "e sugestões.")
+    roteiro_atual = "\n".join(f"Cena {i + 1}: {c.get('texto_tela', '')} — {c.get('narracao', '')}"
+                              for i, c in enumerate(st.session_state.get("cenas") or []))
+    if roteiro_atual and st.button("📋 Usar o roteiro do meu vídeo grátis", key="ap_usar_roteiro"):
+        st.session_state.ap_texto_anuncio = roteiro_atual
+    texto_anuncio = st.text_area("Roteiro ou texto do anúncio", key="ap_texto_anuncio", height=120,
+                                 placeholder="Ex.: Cena 1: Fome? — Cansado de lanche sem graça?…")
+    if st.button("🩺 Analisar meu anúncio", type="primary", key="ap_analisar"):
+        if not texto_anuncio.strip():
+            st.warning("Cole o roteiro ou o texto do anúncio.")
+        else:
+            with st.spinner("Analisando…"):
+                try:
+                    st.session_state.ap_analise = analisar_anuncio(texto_anuncio, negocio)
+                except Exception as e:
+                    st.error(str(e))
+    if st.session_state.get("ap_analise"):
+        with st.container(border=True):
+            st.markdown(st.session_state.ap_analise)
+
+    # ---------- cartilha ----------
+    st.markdown("#### 📘 Cartilha completa para anunciar (do zero)")
+    st.caption("Base fixa revisada em novembro de 2026. Para o que muda toda semana (tendências, "
+               "produtos em alta), use a pesquisa ao vivo acima.")
+    with st.expander("1. Antes de gravar: objetivo, público e oferta", expanded=True):
+        st.markdown(
+            "- **Um objetivo por anúncio:** vender um produto, trazer clientes para a loja ou "
+            "receber mensagens no WhatsApp. Anúncio que quer tudo não convence ninguém.\n"
+            "- **Para quem é:** pense em UMA pessoa (ex.: *mãe que trabalha fora e não tem tempo "
+            "de cozinhar*). Fale com ela.\n"
+            "- **Qual é a oferta:** o que a pessoa ganha agindo agora? (preço, combo, brinde, "
+            "frete grátis, horário especial). Sem oferta clara, o vídeo vira só “bonito”.\n"
+            "- **Uma frase que resume:** *“Marmita caseira entregue em 30 minutos, a partir de "
+            "R$ 19”*. Se você não consegue resumir, o cliente também não vai entender.")
+    with st.expander("2. Os 3 primeiros segundos (o gancho)"):
+        st.markdown(
+            "É aqui que a pessoa decide se continua assistindo ou rola a tela. Por isso:\n"
+            "- **Comece pelo resultado, não pela apresentação.** Nada de logo ou “Olá, somos a…” "
+            "no começo.\n"
+            "- **Tipos de gancho que funcionam:**\n"
+            "  - *Pergunta:* “Você também paga caro em…?”\n"
+            "  - *Promessa:* “Em 30 segundos você vai saber como…”\n"
+            "  - *Choque/curiosidade:* “Ninguém te conta isso sobre…”\n"
+            "  - *Visual forte:* o produto em ação logo no primeiro quadro (queijo derretendo, "
+            "antes e depois).\n"
+            "- **Rosto falando para a câmera** costuma prender mais do que imagens soltas.\n"
+            "- No Studio, a **cena 1** é o gancho — capriche na frase dela.")
+    with st.expander("3. A estrutura que vende"):
+        st.markdown(
+            "1. **Gancho** (0–3 s): prende a atenção.\n"
+            "2. **Problema** (3–8 s): mostra a dor ou desejo do cliente.\n"
+            "3. **Solução** (8–18 s): seu produto/serviço resolvendo isso.\n"
+            "4. **Prova** (opcional): depoimento, avaliação, “mais de 500 clientes”, bastidores.\n"
+            "5. **Chamada para ação** (últimos segundos): diga exatamente o que fazer — "
+            "“Chama no WhatsApp”, “Link na bio”, “Venha hoje”.\n\n"
+            "**Tamanho:** para vender, vídeos de **15 a 30 segundos** costumam funcionar melhor; "
+            "tutoriais podem ir de 30 a 60 s. O que importa é quantas pessoas assistem até o fim.")
+    with st.expander("4. Formatos que dão certo"):
+        st.markdown(
+            "- **Cara de rede social (UGC):** parece um vídeo de pessoa comum, gravado no celular. "
+            "Hoje rende mais que comercial de TV.\n"
+            "- **Demonstração:** o produto funcionando na prática.\n"
+            "- **Antes e depois:** transformação visível (limpeza, cabelo, reforma, organização).\n"
+            "- **Depoimento:** cliente real contando a experiência.\n"
+            "- **Bastidores:** como você prepara, embala, atende — gera confiança.\n"
+            "- **Lista / “3 motivos”:** fácil de entender e de assistir até o fim.\n"
+            "- **Pergunta + resposta:** responda em vídeo uma dúvida que aparece nos comentários.\n"
+            "- **Mininovela / série:** histórias curtas em episódios — uma tendência forte em "
+            "2026 no Brasil.\n\n"
+            "No Studio, escolha o **Modelo do anúncio** com esses formatos prontos.")
+    with st.expander("5. Por que os anúncios falham"):
+        st.markdown(
+            "- **Começa devagar** (logo, apresentação, vinheta) — a pessoa já rolou a tela.\n"
+            "- **Cara de comercial de TV** em plataforma de vídeo curto.\n"
+            "- **Sem oferta nem chamada para ação** — a pessoa gosta, mas não sabe o que fazer.\n"
+            "- **Vídeo deitado (horizontal)** num app vertical.\n"
+            "- **Texto escondido** na parte de baixo da tela (fica embaixo dos botões do app).\n"
+            "- **Sem som ou sem legenda:** a maioria assiste com som, mas muita gente vê sem — "
+            "use os dois (o Studio já faz legenda automática).\n"
+            "- **O mesmo vídeo por semanas:** o público cansa. Troque detalhes a cada 2–3 "
+            "semanas e crie ideias novas todo mês.\n"
+            "- **Julgar cedo demais:** no anúncio pago, mexer a toda hora (ou desistir em 1–2 "
+            "dias) atrapalha o aprendizado da plataforma.\n"
+            "- **Público apertado demais** no anúncio pago: deixe a plataforma encontrar quem "
+            "compra.")
+    with st.expander("6. Tendências de 2026"):
+        st.markdown(
+            "- **Autenticidade em primeiro lugar:** bastidores, histórias reais e pessoas de "
+            "verdade continuam gerando mais confiança, mesmo com tanta IA.\n"
+            "- **Histórias em série (mininovelas)** para marcas.\n"
+            "- **Compras dentro do app (social commerce):** vender direto pelo vídeo e por lives.\n"
+            "- **Apresentadores virtuais com IA** em vendas ao vivo.\n"
+            "- **Vídeo vertical e curto** como formato principal.\n\n"
+            "_Tendência muda rápido: use o botão **🔥 O que está em alta agora** para ver a "
+            "desta semana._")
+    with st.expander("7. O que mais vende no TikTok Shop Brasil"):
+        st.markdown(
+            "Em pesquisa da Opinion Box com 1.066 usuários do TikTok (divulgada em outubro de "
+            "2026), as categorias em que mais gente já comprou foram:\n"
+            "- **Moda:** 34%\n- **Casa e decoração:** 31%\n- **Beleza:** 31%\n"
+            "- **Saúde e bem-estar:** 25%\n- **Tecnologia:** 23%\n\n"
+            "No 1º semestre de 2026, as vendas de **moda cresceram 154%** e as de **beleza "
+            "151%** em relação ao semestre anterior. Faixas de preço que aparecem muito entre os "
+            "mais vendidos: beleza de R$ 40 a 180, casa de R$ 30 a 120, acessórios simples de "
+            "tecnologia e de pet.\n\n"
+            "_Para a lista desta semana, use **🛒 Produtos que mais vendem**._")
+    with st.expander("8. Como usar os comentários a seu favor"):
+        st.markdown(
+            "- **Leia os comentários dos concorrentes:** as dúvidas e reclamações que aparecem lá "
+            "são exatamente o que o seu anúncio deve responder.\n"
+            "- **Transforme perguntas em vídeos:** “Entrega no meu bairro?” vira um anúncio "
+            "respondendo isso.\n"
+            "- **Responda rápido e com simpatia** — quem comenta está perto de comprar.\n"
+            "- **Use elogios como prova:** um print de comentário positivo vale como depoimento "
+            "(peça autorização).\n"
+            "- **Termine a legenda com uma pergunta** para puxar conversa.\n\n"
+            "_Use **💬 O que os clientes comentam** para ver as dúvidas mais comuns do seu nicho._")
+    with st.expander("9. Postar, impulsionar e medir"):
+        st.markdown(
+            "- **Comece no orgânico:** poste o vídeo no seu perfil (Reels, TikTok, Shorts, "
+            "Status do WhatsApp) e veja qual chama mais atenção.\n"
+            "- **Impulsione o que já funcionou:** coloque dinheiro no vídeo que teve mais "
+            "visualizações completas, comentários e mensagens.\n"
+            "- **No anúncio pago, comece simples:** objetivo de mensagens ou vendas, público "
+            "amplo da sua cidade, e deixe rodar alguns dias antes de mexer.\n"
+            "- **Teste versões:** o Studio gera **3 versões** do roteiro — publique mais de uma e "
+            "veja qual vende mais.\n"
+            "- **Olhe para o que importa:** mensagens recebidas e vendas, não só curtidas.")
+    with st.expander("10. Checklist antes de publicar ✅"):
+        st.markdown(
+            "- [ ] Gancho forte nos 3 primeiros segundos\n"
+            "- [ ] Uma oferta clara\n"
+            "- [ ] Vídeo vertical 9:16\n"
+            "- [ ] Legenda na tela e som\n"
+            "- [ ] Texto longe da parte de baixo da tela\n"
+            "- [ ] Chamada para ação + contato (WhatsApp, @, endereço)\n"
+            "- [ ] Entre 15 e 30 segundos (para vender)\n"
+            "- [ ] Legenda do post com pergunta e hashtags (use o **Kit de postagem**)\n"
+            "- [ ] Passou pela **🩺 Análise do anúncio** com nota boa")
+    with st.expander("📚 Fontes desta cartilha"):
+        st.markdown(
+            "- [Exame — TikTok Shop no Brasil: nichos e comissões (out/2026)]"
+            "(https://exame.com/tecnologia/examelab/tiktok-shop-no-brasil-os-nichos-mais-lucrativos-e-as-novas-taxas-de-comissao/)\n"
+            "- [Mundo do Marketing — 4 tendências em vídeos curtos para 2026]"
+            "(https://mundodomarketing.com.br/4-tendencias-em-videos-curtos-para-2026)\n"
+            "- [Stackmatix — TikTok Ad Creative Best Practices 2026]"
+            "(https://www.stackmatix.com/blog/tiktok-ad-creative-best-practices-2026)\n"
+            "- [TikAdTools — TikTok Ads Mistakes (atualizado set/2026)]"
+            "(https://tikadtools.com/blog/tiktok-ads-mistakes/)")
+
+
 def aba_assistente():
     st.subheader("🤖 Assistente IA")
     c1, c2 = st.columns([3, 1])
@@ -2716,7 +3765,12 @@ def aba_assistente():
         "roteiro, cria imagens grátis, narração em português, música e animações; (2) Criar "
         "vídeos ultra profissionais — a pessoa conecta a chave xAI (console.x.ai, paga por uso, sem precisar "
         "de Premium) e usa a Grok Imagine com avatar da própria foto falando, até 15s em 720p. "
-        "O fundo das cenas pode ser o banco de fotos do app (escolhidas na galeria por categoria de negócio) ou as fotos do próprio usuário. Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
+        "O fundo das cenas pode ser o banco de fotos do app (escolhidas na galeria por categoria de negócio) ou as fotos do próprio usuário. "
+        "O vídeo grátis também tem legendas estilo TikTok, selo de oferta, contagem regressiva, "
+        "logo, QR code do WhatsApp, transições, efeitos sonoros, 8 estilos de música, modelos de "
+        "anúncio, 3 versões de roteiro e kit de postagem (capa, legenda e hashtags). A aba "
+        "Aprenda a anunciar tem pesquisa ao vivo na internet, análise do anúncio e uma cartilha. "
+        "Ajude com roteiros, textos de tela, CTAs, legendas, hashtags e estratégias de anúncio.")}
     for m in st.session_state.chat:
         with st.chat_message(m["role"], avatar="🧑" if m["role"] == "user" else "🤖"):
             st.markdown(m["content"])
@@ -2748,13 +3802,23 @@ def aba_tutorial():
     with st.expander("2. Criando um vídeo grátis"):
         st.markdown(
             "1. Abra **Criar vídeo grátis** e escreva o produto e os detalhes.\n"
-            "2. Escolha o **formato** (9:16 para Reels/TikTok), o **tema visual** e o **fundo das "
-            "cenas**: as **fotos do banco do app** (escolha na galeria) ou **só as suas fotos**.\n"
-            "3. Envie fotos do seu produto ou loja, se tiver — elas entram primeiro.\n"
-            "4. Clique em **Gerar roteiro com IA** e ajuste os textos na tabela.\n"
-            "5. Escolha a música e se quer narração em português.\n"
-            "6. Clique em **Criar vídeo grátis**. Leva de 1 a 3 minutos.\n"
-            "7. Assista e clique em **Baixar vídeo (MP4)**."
+            "2. Escolha o **tom** e o **modelo do anúncio** (promoção relâmpago, inauguração, "
+            "cardápio do dia, 3 motivos, antes e depois, depoimento…).\n"
+            "3. Escolha o **tema visual** e o **fundo das cenas**: fotos do banco do app ou só as "
+            "suas fotos. Fotos que você enviar entram primeiro.\n"
+            "4. Em **✨ Turbinar o vídeo**, escolha:\n"
+            "   - **Legendas estilo TikTok** — a frase falada aparece na tela, palavra por "
+            "palavra;\n"
+            "   - **animação do texto** e **transição** entre as cenas;\n"
+            "   - **selo de oferta** (preço, desconto, “só hoje”…) e **contagem regressiva**;\n"
+            "   - **logo** da empresa e **WhatsApp** (vira um QR code no final do vídeo);\n"
+            "   - **efeitos sonoros**.\n"
+            "5. Toque em **Gerar roteiro com IA** — ou em **🎲 Gerar 3 versões** e escolha a "
+            "melhor. Ajuste os textos na tabela.\n"
+            "6. Escolha a música (8 estilos), a voz e a velocidade.\n"
+            "7. Toque em **Criar vídeo grátis** e aguarde de 1 a 3 minutos.\n"
+            "8. Baixe o vídeo e use o **📦 Kit de postagem**: capa do post, legenda e hashtags "
+            "prontas."
         )
     with st.expander("3. Vídeos ultra profissionais: como criar a chave da fal.ai"):
         st.markdown(
@@ -2824,7 +3888,18 @@ def aba_tutorial():
             "e ajuste o estilo.\n"
             "5. Clique em **Criar vídeo profissional** e aguarde de 1 a 4 minutos."
         )
-    with st.expander("7. Dicas para vídeos que vendem"):
+    with st.expander("7. Aprenda a anunciar (pesquisa ao vivo e análise)"):
+        st.markdown(
+            "1. Abra a aba **📈 Aprenda a anunciar** e escreva o seu negócio.\n"
+            "2. Toque num botão de pesquisa: **o que está em alta**, **anúncios que deram "
+            "certo**, **anúncios que falharam**, **produtos que mais vendem**, **o que os "
+            "clientes comentam** ou **ideias de anúncio para mim**. O app pesquisa a internet "
+            "na hora e mostra as fontes.\n"
+            "3. Em **🩺 Analise o seu anúncio**, cole o roteiro (ou use o do vídeo grátis) e "
+            "receba nota, pontos fracos e sugestões.\n"
+            "4. Leia a **cartilha completa** — do primeiro anúncio ao checklist final."
+        )
+    with st.expander("8. Dicas para vídeos que vendem"):
         st.markdown(
             "- Comece com um gancho forte na primeira cena.\n"
             "- Textos de tela curtos: até 7 palavras.\n"
@@ -2833,7 +3908,7 @@ def aba_tutorial():
             "- Vertical 9:16 funciona melhor em Reels, TikTok e Status.\n"
             "- Peça ideias ao **Assistente IA**."
         )
-    with st.expander("8. Problemas comuns"):
+    with st.expander("9. Problemas comuns"):
         st.markdown(
             "- **Chave Groq inválida:** copie a chave inteira (gsk_…). Se perdeu, crie outra.\n"
             "- **Limite da Groq:** a chave grátis tem limite por minuto; espere um pouco.\n"
@@ -2860,7 +3935,7 @@ def app():
             del st.session_state[k]
         st.rerun()
     abas = st.tabs(["🎁 Criar vídeo grátis", "💎 Criar vídeos ultra profissionais", "📁 Meus vídeos",
-                    "🤖 Assistente IA", "📚 Tutorial"])
+                    "📈 Aprenda a anunciar", "🤖 Assistente IA", "📚 Tutorial"])
     with abas[0]:
         aba_gratis()
     with abas[1]:
@@ -2868,8 +3943,10 @@ def app():
     with abas[2]:
         aba_galeria()
     with abas[3]:
-        aba_assistente()
+        aba_aprenda()
     with abas[4]:
+        aba_assistente()
+    with abas[5]:
         aba_tutorial()
 
 
