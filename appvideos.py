@@ -177,15 +177,8 @@ def erro_api(resp):
                 "créditos** ou entre em console.x.ai → "
                 "Billing → adicione créditos (ex.: US$ 5) ou aumente o limite de gasto. "
                 "Não precisa trocar a chave. Os vídeos grátis continuam funcionando normalmente.")
-    if "per day" in texto or "(tpd)" in texto or "(rpd)" in texto:
-        return ("📅 A sua chave grátis do Groq usou todo o limite de hoje para este tipo de "
-                "pesquisa. O limite volta sozinho em algumas horas (ou amanhã). Os vídeos grátis "
-                "continuam funcionando.")
     if "rate limit" in texto or resp.status_code == 429:
         return ("⏳ Muitos pedidos em pouco tempo. Espere 1 minuto e tente de novo.")
-    if resp.status_code == 413 or "too large" in texto:
-        return ("📏 O pedido ficou grande demais para a chave grátis. Escreva o produto de forma "
-                "mais curta e tente de novo.")
     if "incorrect api key" in texto or resp.status_code == 401:
         return ("🔑 A chave não foi aceita. Confira se copiou a chave inteira, sem espaços, "
                 "ou crie uma nova.")
@@ -3320,74 +3313,6 @@ def aba_galeria():
 
 
 # ---------------- aba "Aprenda a anunciar" ----------------
-# etapa 1 (com busca na internet): notas curtas, para caber no limite da chave grátis
-SISTEMA_COLETA = (
-    "Hoje é {dia}. Você é pesquisador de anúncios em vídeo curto (TikTok, Reels, Shorts, "
-    "Facebook). USE A BUSCA NA INTERNET: TikTok Creative Center (Top Ads), Biblioteca de "
-    "Anúncios da Meta, YouTube, reportagens, estudos de caso e sites de marketing. Procure "
-    "primeiro o produto exato; se achar pouco, amplie para produtos ou negócios SIMILARES.\n"
-    "Entregue só NOTAS DE PESQUISA objetivas, em português, no máximo 700 palavras:\n"
-    "Linha 1, exatamente um destes: 'Confiança: 🟢 alta — várias fontes confiáveis concordam', "
-    "'Confiança: 🟡 média — poucas fontes ou fontes que discordam' ou 'Confiança: 🔴 baixa — "
-    "não encontrei informação confiável'.\n"
-    "Depois, de 3 a 5 anúncios, cada um com: nome/marca; rede; visualizações ou resultado COM "
-    "a data (ou 'não divulgado'); produto exato ou similar; link; e TUDO o que a fonte disser "
-    "sobre gancho, cenas, duração, formato, visual, texto na tela, áudio/música, oferta, "
-    "chamada final, legenda/hashtags e comentários do público.\n"
-    "Nunca invente números, marcas, vídeos ou detalhes. No fim: 'Fontes:' com os links.")
-
-# etapa 2 (sem busca, outro modelo): transforma as notas na análise completa
-SISTEMA_CIRURGICO = (
-    "Você é um analista sênior de anúncios em vídeo curto (TikTok, Reels, Shorts, Facebook) que "
-    "ensina pequenos negócios brasileiros. Você recebe NOTAS DE PESQUISA feitas hoje na "
-    "internet. Os FATOS (anúncios, marcas, números, datas, links) vêm SOMENTE dessas notas.\n\n"
-    "REGRAS DE HONESTIDADE (obrigatórias):\n"
-    "- Só cite visualizações, curtidas, vendas ou resultados que estejam nas notas, com a data. "
-    "Se as notas não informarem, escreva 'não divulgado'. Nunca invente números, marcas, "
-    "vídeos ou links.\n"
-    "- Em cada detalhe de estilo, marque [fonte] quando as notas descrevem aquilo e [provável] "
-    "quando é dedução sua a partir do formato.\n"
-    "- Se as notas trouxerem anúncios de produtos similares, diga que são similares.\n"
-    "- Não critique nem acuse marcas: o foco é aprender com o que funcionou.\n\n"
-    "Responda em português do Brasil, linguagem simples, neste formato:\n"
-    "Primeira linha: copie a linha 'Confiança: …' das notas, sem mudar.\n\n"
-    "## 🏆 Ranking dos anúncios que mais deram certo\n"
-    "Tabela: # | Anúncio / marca | Rede | Visualizações ou resultado (com data) | Produto exato "
-    "ou similar | Link. De 3 a 5 anúncios.\n\n"
-    "## 🔬 Análise cirúrgica — um bloco para CADA anúncio do ranking (### 1. nome)\n"
-    "- **Gancho (0 a 3 s):** o que aparece e o que é dito/escrito, palavra por palavra se houver.\n"
-    "- **Estrutura segundo a segundo:** linha do tempo cena por cena (ex.: 0–3 s, 3–8 s…).\n"
-    "- **Duração total e ritmo:** quantos segundos e a frequência de cortes.\n"
-    "- **Formato:** UGC/depoimento, demonstração, antes e depois, unboxing, bastidores, POV, "
-    "humor, tutorial, comparação, trend…\n"
-    "- **Câmera e visual:** enquadramento, celular ou estúdio, luz, cores, quem aparece.\n"
-    "- **Texto na tela e legendas:** o que está escrito, tamanho, posição.\n"
-    "- **Áudio:** voz (quem fala e o tom), música ou som em alta, efeitos.\n"
-    "- **Oferta e prova:** preço, desconto, garantia, depoimentos, números.\n"
-    "- **Chamada para ação:** a frase exata e onde aparece.\n"
-    "- **Legenda do post e hashtags** (se a fonte mostrar).\n"
-    "- **O que o público comentou** (se a fonte mostrar).\n"
-    "- **Por que funcionou:** o gatilho psicológico principal.\n\n"
-    "## 🧬 O padrão que se repete\n"
-    "O que os anúncios vencedores têm em comum (gancho, duração, formato, oferta, CTA).\n\n"
-    "## 🛠️ Receita pronta para o seu produto\n"
-    "Um roteiro de 15 a 30 segundos inspirado nos vencedores, cena por cena: tempo, o que "
-    "mostrar, texto na tela, narração, música e chamada final. Mais 3 opções de gancho.\n\n"
-    "## ⚠️ O que evitar\n"
-    "Erros que derrubaram anúncios parecidos.\n\n"
-    "Fontes: lista com os links que estão nas notas.")
-PESQUISAS_COM_SISTEMA = {"🏆 Anúncios que deram certo": SISTEMA_COLETA}
-
-
-def analise_cirurgica(notas, produto):
-    """Etapa 2: escreve a análise completa a partir das notas da pesquisa (sem nova busca)."""
-    try:
-        return chat_groq([{"role": "system", "content": SISTEMA_CIRURGICO},
-                          {"role": "user", "content": f"Produto: {produto}\n\nNOTAS DE PESQUISA:\n{notas}"}],
-                         temperatura=0.4)
-    except Exception:
-        return notas + ("\n\n_(A análise detalhada não pôde ser montada agora — acima estão as "
-                        "notas da pesquisa. Tente de novo em 1 minuto para a versão completa.)_")
 MODELOS_BUSCA = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 PESQUISAS_PRONTAS = {
     "🔥 O que está em alta agora": (
@@ -3395,10 +3320,9 @@ PESQUISAS_PRONTAS = {
         "Reels e YouTube Shorts no Brasil para anúncios de {negocio}? Dê exemplos concretos de "
         "ganchos, formatos e sons/temas em alta."),
     "🏆 Anúncios que deram certo": (
-        "Produto ou negócio: {negocio}. Pesquise na internet os anúncios e vídeos curtos de "
-        "{negocio} — ou, se houver pouco material, de produtos e negócios SIMILARES — que mais "
-        "tiveram visualizações e resultado no TikTok, Instagram Reels, YouTube Shorts e Facebook "
-        "(Brasil e mundo), e faça a análise cirúrgica completa de cada um."),
+        "Quais anúncios e vídeos de {negocio} deram muito certo recentemente no TikTok, Reels e "
+        "YouTube (no Brasil ou no mundo)? Explique POR QUE funcionaram (gancho, formato, oferta) e "
+        "como um pequeno negócio pode adaptar a ideia."),
     "⚠️ Anúncios que falharam": (
         "Quais erros fazem anúncios de {negocio} fracassarem em vídeos curtos (TikTok, Reels, "
         "Shorts)? Traga exemplos e casos recentes e como evitar cada erro."),
@@ -3423,27 +3347,8 @@ def limpar_citacoes(texto):
     return re.sub(r"[ \t]+\n", "\n", texto).strip()
 
 
-def espera_groq(resp):
-    """Se o Groq recusou por excesso de pedidos e dá para esperar pouco, devolve os segundos."""
-    if resp.status_code != 429:
-        return None
-    try:
-        msg = str(resp.json().get("error", {}).get("message", ""))
-    except Exception:
-        msg = resp.text or ""
-    if re.search(r"per day|\(TPD\)|\(RPD\)", msg):
-        return None  # limite do dia: esperar 1 minuto não resolve
-    m = re.search(r"Limit (\d+), Used \d+, Requested (\d+)", msg)
-    if m and int(m.group(2)) > int(m.group(1)):
-        return None  # pedido maior que o limite: repetir não adianta
-    m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", msg)
-    seg = (int(m.group(1) or 0) * 60 + float(m.group(2))) if m else \
-        float(resp.headers.get("retry-after", 20) or 20)
-    return seg + 1 if seg <= 30 else None
-
-
 @st.cache_data(ttl=6 * 60 * 60, show_spinner=False, max_entries=300)
-def _pesquisa_cache(pergunta, dia, chave, sistema_extra="", limite=3000):
+def _pesquisa_cache(pergunta, dia, chave, sistema_extra=""):
     """Faz a pesquisa na internet (guarda por 6 h para não repetir a mesma busca)."""
     sistema = sistema_extra.replace("{dia}", dia) if sistema_extra else (
         f"Hoje é {dia}. Você é consultor de marketing para pequenos negócios brasileiros e explica "
@@ -3457,31 +3362,24 @@ def _pesquisa_cache(pergunta, dia, chave, sistema_extra="", limite=3000):
         "informação confiável'. Só use 🟢 com pelo menos 2 fontes independentes concordando.")
     ultimo = ""
     for modelo in MODELOS_BUSCA:
-        for tentativa in range(2):
-            try:
-                r = requests.post(
-                    f"{GROQ_BASE}/chat/completions",
-                    headers={"Authorization": f"Bearer {chave}", "Content-Type": "application/json"},
-                    json={"model": modelo, "messages": [{"role": "system", "content": sistema},
-                                                        {"role": "user", "content": pergunta}],
-                          "tools": [{"type": "browser_search"}], "tool_choice": "required",
-                          "reasoning_effort": "low", "max_completion_tokens": limite,
-                          "temperature": 0.6},
-                    timeout=150)
-            except requests.RequestException as e:
-                ultimo = str(e)
-                break
-            if r.status_code == 200:
-                texto = r.json()["choices"][0]["message"].get("content") or ""
-                if texto.strip():
-                    return limpar_citacoes(texto), True
-                ultimo = "a pesquisa voltou vazia"
-                break
-            ultimo = erro_api(r)
-            espera = espera_groq(r)
-            if espera is None or tentativa:
-                break
-            time.sleep(espera)  # o Groq pediu para esperar uns segundos: espera e tenta de novo
+        try:
+            r = requests.post(
+                f"{GROQ_BASE}/chat/completions",
+                headers={"Authorization": f"Bearer {chave}", "Content-Type": "application/json"},
+                json={"model": modelo, "messages": [{"role": "system", "content": sistema},
+                                                    {"role": "user", "content": pergunta}],
+                      "tools": [{"type": "browser_search"}], "tool_choice": "required",
+                      "reasoning_effort": "low", "max_completion_tokens": 3000,
+                      "temperature": 0.6},
+                timeout=150)
+        except requests.RequestException as e:
+            ultimo = str(e)
+            continue
+        if r.status_code == 200:
+            texto = r.json()["choices"][0]["message"].get("content") or ""
+            if texto.strip():
+                return limpar_citacoes(texto), True
+        ultimo = erro_api(r)
     raise RuntimeError(ultimo or "a pesquisa não respondeu")
 
 
@@ -3490,15 +3388,12 @@ def pesquisa_ao_vivo(pergunta, sistema_extra="", chave=None):
     Devolve (texto, ao_vivo)."""
     dia = time.strftime("%d/%m/%Y")
     try:
-        return _pesquisa_cache(pergunta, dia, chave or st.session_state.groq_key, sistema_extra,
-                               2500 if sistema_extra else 3000)
+        return _pesquisa_cache(pergunta, dia, chave or st.session_state.groq_key, sistema_extra)
     except Exception as e:
         aviso = str(e)
-    if sistema_extra and aviso.startswith(("📅", "📏")):
-        raise RuntimeError(aviso)
     if sistema_extra:  # pesquisas com instrução própria: sem busca real, não responde
-        raise RuntimeError("A pesquisa na internet não está disponível agora, e sem ela esta "
-                           "análise não seria confiável. Tente de novo em alguns minutos. "
+        raise RuntimeError("A pesquisa na internet não está disponível agora, e sem ela o "
+                           "raio-X não seria confiável. Tente de novo em alguns minutos. "
                            f"(Detalhe: {aviso[:160]})")
     texto = chat_groq([
         {"role": "system", "content": "Você é consultor de marketing para pequenos negócios "
@@ -3574,10 +3469,6 @@ def aba_aprenda():
     for i, nome in enumerate(PESQUISAS_PRONTAS):
         if cols[i % 3].button(nome, key=f"ap_btn_{i}", use_container_width=True):
             escolhida = nome
-    st.caption("🏆 **Anúncios que deram certo** faz uma análise cirúrgica: pesquisa os anúncios "
-               "do seu produto (ou de similares) com mais visualizações e destrincha cada um — "
-               "gancho, cena a cena, câmera, texto, áudio, oferta e chamada final — e no fim "
-               "monta um roteiro pronto para você.")
     livre = st.text_input("…ou faça sua própria pergunta", key="ap_livre",
                           placeholder="Ex.: que tipo de vídeo vende mais marmita fitness?")
     if st.button("🔎 Pesquisar minha pergunta", key="ap_btn_livre") and livre.strip():
@@ -3586,18 +3477,9 @@ def aba_aprenda():
         alvo = negocio.strip() or "pequenos negócios em geral"
         pergunta = livre.strip() + (f" (Meu negócio: {negocio})" if negocio.strip() else "") \
             if escolhida == "livre" else PESQUISAS_PRONTAS[escolhida].format(negocio=alvo)
-        cirurgica = escolhida in PESQUISAS_COM_SISTEMA
-        if cirurgica and not negocio.strip():
-            st.warning("Escreva o produto ou negócio no campo acima para a análise cirúrgica.")
-            escolhida = None
-    if escolhida:
-        with st.spinner("🔬 Pesquisando os anúncios campeões e analisando cada detalhe… "
-                        "(pode levar até 2 minutos)" if cirurgica else
-                        "Pesquisando na internet… (pode levar até 1 minuto)"):
+        with st.spinner("Pesquisando na internet… (pode levar até 1 minuto)"):
             try:
-                texto, ao_vivo = pesquisa_ao_vivo(pergunta, PESQUISAS_COM_SISTEMA.get(escolhida, ""))
-                if cirurgica:
-                    texto = analise_cirurgica(texto, negocio.strip())
+                texto, ao_vivo = pesquisa_ao_vivo(pergunta)
                 st.session_state.ap_resultado = {
                     "titulo": "Sua pergunta" if escolhida == "livre" else escolhida,
                     "texto": texto, "ao_vivo": ao_vivo, "quando": time.strftime("%d/%m/%Y %H:%M")}
@@ -3611,10 +3493,6 @@ def aba_aprenda():
                            else "📴 sem pesquisa ao vivo (conhecimento geral)"))
             if res["ao_vivo"]:
                 painel_confianca(res["texto"])
-            if res["titulo"] in PESQUISAS_COM_SISTEMA:
-                st.caption("🔬 **[fonte]** = o detalhe está descrito na fonte · **[provável]** = "
-                           "dedução a partir do formato do anúncio. Abra os links para ver os "
-                           "vídeos originais.")
             st.markdown(res["texto"])
 
     # ---------- análise do anúncio ----------
@@ -3912,10 +3790,6 @@ def aba_tutorial():
             "certo**, **anúncios que falharam**, **produtos que mais vendem**, **o que os "
             "clientes comentam** ou **ideias de anúncio para mim**. O app pesquisa a internet "
             "na hora e mostra as fontes.\n"
-            "   - **🏆 Anúncios que deram certo** faz uma análise cirúrgica: escreva o produto "
-            "(ex.: *creatina*, *bolo de pote*) e o app busca os anúncios dele, ou de similares, com "
-            "mais visualizações e destrincha cada um, do gancho à chamada final, terminando com um "
-            "roteiro pronto para você. Leva até 2 minutos.\n"
             "3. Em **🩺 Analise o seu anúncio**, cole o roteiro (ou use o do vídeo grátis) e "
             "receba nota, pontos fracos e sugestões.\n"
             "4. Leia a **cartilha completa** — do primeiro anúncio ao checklist final."
