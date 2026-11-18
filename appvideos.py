@@ -2536,9 +2536,13 @@ def cena_vazia(c):
         and c.get("foto") in (None, "", FOTO_AUTO)
 
 
-def opcoes_foto_cena(fotos_up):
-    """Rótulo → ('meu', índice) ou ('banco', pasta, índice), para a coluna Foto da tabela."""
+def opcoes_foto_cena(fotos_up, fotos_pc=None):
+    """Rótulo → ('pc', índice), ('meu', índice) ou ('banco', pasta, índice), para a coluna
+    Foto da tabela."""
     ops = {FOTO_AUTO: None}
+    for k, f in enumerate(fotos_pc or []):
+        nome = os.path.splitext(getattr(f, "name", "") or "foto")[0][:28]
+        ops[f"💻 {k + 1}. {nome}"] = ("pc", k)
     for k in range(len(fotos_up or [])):
         ops[f"📷 Minha foto {k + 1}"] = ("meu", k)
     for p, lista in banco_fotos().items():
@@ -2789,7 +2793,20 @@ def aba_gratis():
     if st.session_state.cenas:
         st.markdown("**Roteiro** — edite tudo antes de criar o vídeo: foto, texto, narração, "
                     "música, tempo, animação e transição de cada cena.")
-        ops_foto = opcoes_foto_cena(fotos_up)
+        with st.container(border=True):
+            fotos_pc = st.file_uploader(
+                "💻 Carregar fotos do computador ou celular para as cenas",
+                type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True,
+                key=f"g_up_tabela_{st.session_state.rodada}",
+                help="As fotos carregadas aqui aparecem na coluna 🖼️ Foto da tabela, com o "
+                     "símbolo 💻. Fotos verticais (1080 × 1920) ficam melhores.") or []
+            if fotos_pc:
+                st.caption(f"✅ {len(fotos_pc)} foto(s) carregada(s). Escolha na coluna 🖼️ Foto "
+                           "ou coloque todas nas cenas de uma vez:")
+                if st.button("⬇️ Colocar estas fotos nas cenas, na ordem",
+                             key=f"g_pc_ordem_{st.session_state.rodada}"):
+                    st.session_state.g_pc_aplicar = True
+        ops_foto = opcoes_foto_cena(fotos_up, fotos_pc)
         base_tab = [normalizar_cena(c) for c in st.session_state.cenas]
         for c in base_tab:
             if c["foto"] not in ops_foto:
@@ -2822,6 +2839,17 @@ def aba_gratis():
             },
         )
         cenas_finais = [normalizar_cena(c) for c in editado if not cena_vazia(normalizar_cena(c))]
+        if st.session_state.pop("g_pc_aplicar", False) and fotos_pc:
+            rotulos = [k for k, v in ops_foto.items() if v and v[0] == "pc"]
+            novas = [dict(c) for c in cenas_finais]
+            for k, rot in enumerate(rotulos):  # uma foto em cada cena; sobrando foto, vira cena nova
+                if k < len(novas):
+                    novas[k]["foto"] = rot
+                else:
+                    novas.append(normalizar_cena({"foto": rot}))
+            st.session_state.cenas = novas
+            st.session_state.roteiro_v += 1
+            st.rerun()
         # prévia das fotos de cada cena
         if cenas_finais:
             with st.expander("👀 Ver as fotos de cada cena", expanded=False):
@@ -2831,7 +2859,9 @@ def aba_gratis():
                     for k, c in enumerate(cenas_finais[ini:ini + por_linha]):
                         ref = ops_foto.get(c["foto"])
                         with cols[k]:
-                            if ref and ref[0] == "banco":
+                            if ref and ref[0] == "pc":
+                                st.image(fotos_pc[ref[1]], width="stretch")
+                            elif ref and ref[0] == "banco":
                                 st.image(miniatura(ref[1], ref[2]), width="stretch")
                             elif ref and ref[0] == "meu":
                                 st.image(fotos_up[ref[1]], width="stretch")
@@ -2868,7 +2898,7 @@ def aba_gratis():
         musica_final = cf2.selectbox("🎵 Música da chamada final", [PADRAO_MUSICA] + MUSICAS,
                                      key=f"g_mus_final_{st.session_state.rodada}")
     else:
-        cenas_finais, cta_final, musica_final, ops_foto = [], cta, PADRAO_MUSICA, {}
+        cenas_finais, cta_final, musica_final, ops_foto, fotos_pc = [], cta, PADRAO_MUSICA, {}, []
 
     if st.button("🎬 2. Criar vídeo grátis", type="primary", key=f"g_criar_{st.session_state.rodada}"):
         if not produto.strip():
@@ -2900,7 +2930,9 @@ def aba_gratis():
             fotos_cena = []
             for c in cenas_finais:
                 ref = ops_foto.get(c["foto"])
-                fotos_cena.append(fotos[ref[1]] if ref and ref[0] == "meu" and ref[1] < len(fotos)
+                fotos_cena.append(Image.open(io.BytesIO(fotos_pc[ref[1]].getvalue())).convert("RGB")
+                                  if ref and ref[0] == "pc" and ref[1] < len(fotos_pc)
+                                  else fotos[ref[1]] if ref and ref[0] == "meu" and ref[1] < len(fotos)
                                   else foto_do_banco(ref[1], ref[2]) if ref and ref[0] == "banco"
                                   else None)
             opc = dict(produto=produto.strip(), cta=cta_final, contato=contato, formato=formato,
@@ -4004,7 +4036,7 @@ def aba_tutorial():
             "   - **Música:** escolha entre as músicas sintetizadas e as trilhas marcadas com 🎵 "
             "(com o nome original de cada arquivo). Toque em **▶️ Ouvir** para escutar.\n"
             "   - **Tabela do roteiro:** depois de gerar o roteiro, edite tudo em cada cena: "
-            "🖼️ foto (sua ou do banco), texto na tela, narração, 🎵 música, ⏱️ segundos, ✍️ "
+            "🖼️ foto (do banco ou carregada do computador/celular em **💻 Carregar fotos**), texto na tela, narração, 🎵 música, ⏱️ segundos, ✍️ "
             "animação do texto e 🔀 transição. A música da chamada final fica logo abaixo. "
             "Use **👀 Ver as fotos de cada cena** para conferir, **↩️ Desfazer minhas edições** "
             "para voltar ao roteiro original e **🧹 Apagar o roteiro** para começar de novo.\n"
