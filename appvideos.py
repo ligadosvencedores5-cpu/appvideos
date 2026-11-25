@@ -30,6 +30,7 @@ Opcional para imagens grátis mais estáveis (chave grátis em enter.pollination
 """
 
 import base64
+import hashlib
 import io
 import json
 import math
@@ -1402,7 +1403,7 @@ def _trilha_amostras(nome):
 
 def trilha_em_loop(nome, n):
     """n amostras da trilha, emendando o fim no começo com um fundido suave se precisar."""
-    a = _trilha_amostras(nome)
+    a = _amostras_enviada(nome) if str(nome).startswith("📁 ") else _trilha_amostras(nome)
     if a is None:
         return sintetizar_musica(n / SR, "Épica")
     if len(a) >= n:
@@ -1424,8 +1425,30 @@ def trilha_em_loop(nome, n):
     return saida
 
 
+MUSICAS_ENVIADAS = {}  # "📁 <hash>" -> bytes do arquivo de música enviado numa cena
+
+
+def registrar_musica_enviada(dados):
+    chave = "📁 " + hashlib.sha1(dados).hexdigest()[:16]
+    if len(MUSICAS_ENVIADAS) > 200:
+        MUSICAS_ENVIADAS.clear()
+    MUSICAS_ENVIADAS[chave] = dados
+    return chave
+
+
+@st.cache_resource(show_spinner=False, max_entries=40)
+def _amostras_enviada(chave):
+    a = decodificar_audio(MUSICAS_ENVIADAS.get(chave, b""))
+    if a is None or not len(a):
+        return None
+    rms = float(np.sqrt(np.mean(a ** 2))) or 1.0
+    return (a * (0.20 / rms)).astype(np.float32)
+
+
 def musica_estilo(duracao, estilo, semente=7):
-    """Qualquer música da lista: trilha real ou trilha sintetizada."""
+    """Qualquer música: trilha real, trilha sintetizada ou música enviada pela pessoa."""
+    if str(estilo).startswith("📁 "):
+        return trilha_em_loop(estilo, int(duracao * SR))
     if estilo in TRILHAS:
         return trilha_em_loop(estilo, int(duracao * SR))
     return sintetizar_musica(duracao, estilo, semente)
@@ -2812,10 +2835,29 @@ def aba_gratis():
             if c["foto"] not in ops_foto:
                 c["foto"] = FOTO_AUTO
         ordem = ["foto", "texto_tela", "narracao", "musica", "segundos", "animacao", "transicao"]
-        base_tab = [{k: c[k] for k in ordem} | {k: c[k] for k in c if k not in ordem}
+        base_tab = [{k: c[k] for k in ordem} | {k: c[k] for k in c
+                                                 if k not in ordem and not k.startswith("_")}
                     for c in base_tab]
-        editado = st.data_editor(
-            base_tab, num_rows="dynamic", width="stretch",
+        st.markdown("""<style>
+        .st-key-g_linhas [data-testid="stHorizontalBlock"]{flex-wrap:nowrap;gap:.35rem}
+        .st-key-g_linhas [data-testid="stColumn"]{min-width:0}
+        .st-key-g_linhas [data-testid="stHorizontalBlock"] > div:first-child,
+        .st-key-g_linhas [data-testid="stHorizontalBlock"] > div:last-child{
+            flex:0 0 46px !important;width:46px !important;min-width:46px !important}
+        .st-key-g_linhas [data-testid="stHorizontalBlock"] > div:nth-child(2){
+            flex:1 1 auto !important;width:auto !important;min-width:0 !important}
+        .st-key-g_col_fotos, .st-key-g_col_musicas{gap:0 !important}
+        .st-key-g_col_fotos > div, .st-key-g_col_musicas > div{height:40px;min-height:40px;margin:0}
+        .st-key-g_col_fotos > div:first-child, .st-key-g_col_musicas > div:first-child{height:36px;min-height:36px}
+        .st-key-g_col_fotos button, .st-key-g_col_musicas button{height:36px;min-height:36px;
+            margin-top:2px;padding:0 .3rem;border-radius:18px;width:100%;justify-content:center}
+        .st-key-g_col_fotos button p, .st-key-g_col_musicas button p{font-size:1rem}
+        .g-topo-linhas{height:36px}
+        </style>""", unsafe_allow_html=True)
+        with st.container(key="g_linhas"):
+            col_f, col_tab, col_m = st.columns([0.55, 12, 0.55])
+        editado = col_tab.data_editor(
+            base_tab, num_rows="dynamic", width="stretch", row_height=40,
             key=f"g_editor_{st.session_state.rodada}_{st.session_state.roteiro_v}",
             column_order=ordem,
             column_config={
@@ -2838,7 +2880,44 @@ def aba_gratis():
                     help="Como esta cena entra no vídeo."),
             },
         )
-        cenas_finais = [normalizar_cena(c) for c in editado if not cena_vazia(normalizar_cena(c))]
+        # botões de cada linha: 📷 foto (à esquerda) e 🎵 música (à direita) só daquela cena
+        r_ = st.session_state.rodada
+        arq_foto, arq_mus = {}, {}
+        with col_f.container(key="g_col_fotos"):
+            st.markdown("<div class='g-topo-linhas'></div>", unsafe_allow_html=True)
+            for k in range(len(editado)):
+                f_atual = st.session_state.get(f"g_upf_{k}_{r_}")
+                with st.popover("✅" if f_atual else "📷", help=f"Foto da cena {k + 1}"):
+                    f = st.file_uploader(f"📷 Foto da cena {k + 1}", type=["jpg", "jpeg", "png", "webp"],
+                                         key=f"g_upf_{k}_{r_}")
+                    if f:
+                        st.image(f, width=160)
+                        st.caption("Esta foto vale para esta cena, no lugar da coluna 🖼️ Foto. "
+                                   "Para tirar, clique no ✕ do arquivo.")
+                if f_atual:
+                    arq_foto[k] = f_atual
+        with col_m.container(key="g_col_musicas"):
+            st.markdown("<div class='g-topo-linhas'></div>", unsafe_allow_html=True)
+            for k in range(len(editado)):
+                m_atual = st.session_state.get(f"g_upm_{k}_{r_}")
+                with st.popover("✅" if m_atual else "🎵", help=f"Música da cena {k + 1}"):
+                    m = st.file_uploader(f"🎵 Música da cena {k + 1}",
+                                         type=["mp3", "wav", "m4a", "ogg", "aac"], key=f"g_upm_{k}_{r_}")
+                    if m:
+                        st.audio(m)
+                        st.caption("Esta música vale para esta cena, no lugar da coluna 🎵 Música. "
+                                   "Para tirar, clique no ✕ do arquivo.")
+                if m_atual:
+                    arq_mus[k] = m_atual
+        cenas_finais = []
+        for k, linha in enumerate(editado):
+            c = normalizar_cena(linha)
+            if k in arq_foto:
+                c["_foto_arquivo"] = arq_foto[k]
+            if k in arq_mus:
+                c["_musica_arquivo"] = arq_mus[k]
+            if not cena_vazia(c) or k in arq_foto or k in arq_mus:
+                cenas_finais.append(c)
         if st.session_state.pop("g_pc_aplicar", False) and fotos_pc:
             rotulos = [k for k, v in ops_foto.items() if v and v[0] == "pc"]
             novas = [dict(c) for c in cenas_finais]
@@ -2859,7 +2938,9 @@ def aba_gratis():
                     for k, c in enumerate(cenas_finais[ini:ini + por_linha]):
                         ref = ops_foto.get(c["foto"])
                         with cols[k]:
-                            if ref and ref[0] == "pc":
+                            if c.get("_foto_arquivo"):
+                                st.image(c["_foto_arquivo"], width="stretch")
+                            elif ref and ref[0] == "pc":
                                 st.image(fotos_pc[ref[1]], width="stretch")
                             elif ref and ref[0] == "banco":
                                 st.image(miniatura(ref[1], ref[2]), width="stretch")
@@ -2925,12 +3006,17 @@ def aba_gratis():
                 st.session_state.cenas = cenas_finais
             fotos = [Image.open(f).convert("RGB") for f in (fotos_up or [])]
             cenas_finais = [normalizar_cena(c) for c in cenas_finais]
-            musicas_cenas = [c["musica"] if c["musica"] in MUSICAS else musica for c in cenas_finais] \
+            musicas_cenas = [registrar_musica_enviada(c["_musica_arquivo"].getvalue())
+                             if c.get("_musica_arquivo")
+                             else c["musica"] if c["musica"] in MUSICAS else musica
+                             for c in cenas_finais] \
                 + [musica_final if musica_final in MUSICAS else musica]
             fotos_cena = []
             for c in cenas_finais:
                 ref = ops_foto.get(c["foto"])
-                fotos_cena.append(Image.open(io.BytesIO(fotos_pc[ref[1]].getvalue())).convert("RGB")
+                fotos_cena.append(Image.open(io.BytesIO(c["_foto_arquivo"].getvalue())).convert("RGB")
+                                  if c.get("_foto_arquivo")
+                                  else Image.open(io.BytesIO(fotos_pc[ref[1]].getvalue())).convert("RGB")
                                   if ref and ref[0] == "pc" and ref[1] < len(fotos_pc)
                                   else fotos[ref[1]] if ref and ref[0] == "meu" and ref[1] < len(fotos)
                                   else foto_do_banco(ref[1], ref[2]) if ref and ref[0] == "banco"
@@ -2953,7 +3039,8 @@ def aba_gratis():
                 "bytes": dados, "titulo": produto.strip(), "capa": opc.get("_capa"),
                 "legenda": "", "info": dict(produto=produto.strip(), descricao=descricao,
                                             publico=publico, cta=cta_final, contato=contato,
-                                            cenas=cenas_finais)}
+                                            cenas=[{k: v for k, v in c.items() if not k.startswith("_")}
+                                                   for c in cenas_finais])}
             salvar_galeria(produto.strip(), "Grátis", dados=dados)
         except Exception as e:
             barra.empty()
@@ -4040,6 +4127,9 @@ def aba_tutorial():
             "animação do texto e 🔀 transição. A música da chamada final fica logo abaixo. "
             "Use **👀 Ver as fotos de cada cena** para conferir, **↩️ Desfazer minhas edições** "
             "para voltar ao roteiro original e **🧹 Apagar o roteiro** para começar de novo.\n"
+            "   - **Botões ao lado de cada linha:** 📷 à esquerda envia uma foto só para aquela "
+            "cena e 🎵 à direita envia uma música só para aquela cena (MP3, WAV, M4A…). Quando "
+            "tem arquivo, o botão vira ✅ e vale no lugar do que está na tabela.\n"
             "4. Em **✨ Turbinar o vídeo**, escolha:\n"
             "   - **Legendas estilo TikTok** — a frase falada aparece na tela, palavra por "
             "palavra;\n"
