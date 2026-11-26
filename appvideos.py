@@ -1403,7 +1403,7 @@ def _trilha_amostras(nome):
 
 def trilha_em_loop(nome, n):
     """n amostras da trilha, emendando o fim no começo com um fundido suave se precisar."""
-    a = _amostras_enviada(nome) if str(nome).startswith("📁 ") else _trilha_amostras(nome)
+    a = _amostras_enviada(nome) if str(nome).startswith(("📁 ", "🎤 ")) else _trilha_amostras(nome)
     if a is None:
         return sintetizar_musica(n / SR, "Épica")
     if len(a) >= n:
@@ -1447,7 +1447,7 @@ def _amostras_enviada(chave):
 
 def musica_estilo(duracao, estilo, semente=7):
     """Qualquer música: trilha real, trilha sintetizada ou música enviada pela pessoa."""
-    if str(estilo).startswith("📁 "):
+    if str(estilo).startswith(("📁 ", "🎤 ")):
         return trilha_em_loop(estilo, int(duracao * SR))
     if estilo in TRILHAS:
         return trilha_em_loop(estilo, int(duracao * SR))
@@ -2653,7 +2653,7 @@ def aba_gratis():
             st.caption(f"🎞️ **{n_cenas} cenas** + chamada final · cerca de "
                        f"{n_cenas * dur_min + 3.5:.0f} s de vídeo.")
         cc3, cc4 = st.columns([3, 2], vertical_alignment="bottom")
-        musica = cc3.selectbox("Música", MUSICAS, index=0, key=f"g_musica_{st.session_state.rodada}")
+        musica = cc3.selectbox("Música", opcoes_musica(), index=0, key=f"g_musica_{st.session_state.rodada}")
         if musica != "Sem música" and cc4.button("▶️ Ouvir", key=f"g_ouvir_mus_{st.session_state.rodada}"):
             with st.spinner("Preparando a música…"):
                 st.session_state.g_previa_musica = (musica, amostra_musica(musica))
@@ -2867,7 +2867,7 @@ def aba_gratis():
                 "texto_tela": st.column_config.TextColumn("Texto na tela", width="medium"),
                 "narracao": st.column_config.TextColumn("Narração", width="large"),
                 "musica": st.column_config.SelectboxColumn(
-                    "🎵 Música", options=[PADRAO_MUSICA] + MUSICAS, width="medium",
+                    "🎵 Música", options=[PADRAO_MUSICA] + opcoes_musica(), width="medium",
                     default=PADRAO_MUSICA),
                 "segundos": st.column_config.NumberColumn(
                     "⏱️ Segundos", min_value=1.5, max_value=30, step=0.5, format="%.1f",
@@ -2976,7 +2976,7 @@ def aba_gratis():
         cf1, cf2 = st.columns([3, 2])
         cta_final = cf1.text_input("CTA final do vídeo", value=cta or st.session_state.cta_gerado,
                                    key=f"g_cta_final_{st.session_state.rodada}")
-        musica_final = cf2.selectbox("🎵 Música da chamada final", [PADRAO_MUSICA] + MUSICAS,
+        musica_final = cf2.selectbox("🎵 Música da chamada final", [PADRAO_MUSICA] + opcoes_musica(),
                                      key=f"g_mus_final_{st.session_state.rodada}")
     else:
         cenas_finais, cta_final, musica_final, ops_foto, fotos_pc = [], cta, PADRAO_MUSICA, {}, []
@@ -3008,9 +3008,9 @@ def aba_gratis():
             cenas_finais = [normalizar_cena(c) for c in cenas_finais]
             musicas_cenas = [registrar_musica_enviada(c["_musica_arquivo"].getvalue())
                              if c.get("_musica_arquivo")
-                             else c["musica"] if c["musica"] in MUSICAS else musica
+                             else c["musica"] if c["musica"] in opcoes_musica() else musica
                              for c in cenas_finais] \
-                + [musica_final if musica_final in MUSICAS else musica]
+                + [musica_final if musica_final in opcoes_musica() else musica]
             fotos_cena = []
             for c in cenas_finais:
                 ref = ops_foto.get(c["foto"])
@@ -3239,7 +3239,7 @@ def audio_mp3_bytes(audio):
     return proc.stdout
 
 
-def gerar_fal(modelo, argumentos, barra, limite=1200):
+def gerar_fal(modelo, argumentos, barra, limite=1200, campo="video", rotulo="Gerando seu vídeo"):
     """Envia para a fila da fal.ai, acompanha o progresso e devolve a URL do vídeo."""
     fal = _fal()
     cliente = fal.SyncClient(key=chave_fal(), default_timeout=120)
@@ -3261,7 +3261,7 @@ def gerar_fal(modelo, argumentos, barra, limite=1200):
             barra.progress(min(20, 6 + seg // 4),
                            text=f"Na fila da IA{f' (posição {pos})' if pos is not None else ''}… {seg}s")
         else:
-            barra.progress(min(95, 20 + seg // 3), text=f"Gerando seu vídeo… {seg}s")
+            barra.progress(min(95, 20 + seg // 3), text=f"{rotulo}… {seg}s")
         if seg > limite:
             try:
                 pedido.cancel()
@@ -3273,11 +3273,11 @@ def gerar_fal(modelo, argumentos, barra, limite=1200):
         resultado = pedido.get()
     except Exception as e:
         raise RuntimeError(erro_fal(e))
-    video = (resultado or {}).get("video") or {}
+    video = (resultado or {}).get(campo) or {}
     url = video.get("url") if isinstance(video, dict) else None
     if not url:
-        raise RuntimeError(f"A IA terminou mas não devolveu o vídeo: {str(resultado)[:300]}")
-    barra.progress(100, text="Vídeo pronto!")
+        raise RuntimeError(f"A IA terminou mas não devolveu o resultado: {str(resultado)[:300]}")
+    barra.progress(100, text="Pronto!")
     return url
 
 
@@ -3303,15 +3303,19 @@ def testar_fal(chave):
         return True, ""
 
 
-def conectar_fal():
-    st.info("Para usar Google Veo, Kling, Seedance e o avatar falante, conecte sua chave da "
-            "fal.ai. Você paga só pelos segundos de vídeo que criar — sem mensalidade.")
-    with st.form(f"form_fal_{st.session_state.rodada}"):
+def conectar_fal(prefixo="p"):
+    if prefixo == "m":
+        st.info("Para a IA cantar sua música, conecte sua chave da fal.ai. Você paga só pela "
+                "música que criar (centavos) — sem mensalidade.")
+    else:
+        st.info("Para usar Google Veo, Kling, Seedance e o avatar falante, conecte sua chave da "
+                "fal.ai. Você paga só pelos segundos de vídeo que criar — sem mensalidade.")
+    with st.form(f"form_fal_{prefixo}_{st.session_state.rodada}"):
         chave = st.text_input("Cole sua chave fal.ai", type="password",
                               placeholder="xxxxxxxx-xxxx-…:xxxxxxxx")
         st.markdown(f"👉 **[Pegar minha chave fal.ai]({LINK_FAL})**")
         ok_btn = st.form_submit_button("Conectar chave fal.ai", type="primary")
-    atalho_creditos("fal", "p_fcred_con")
+    atalho_creditos("fal", f"{prefixo}_fcred_con")
     with st.expander("🔑 Passo a passo: pegar a chave fal.ai e colar aqui", expanded=True):
         st.markdown(
             "1. Toque aqui: **[abrir fal.ai](https://fal.ai)** e entre com sua conta "
@@ -3632,6 +3636,302 @@ def aba_pro_fal():
         aba_pro_cena()
     else:
         aba_pro_avatar()
+
+
+# ---------------- aba "Estúdio Musical IA" ----------------
+TIPOS_MUSICA = ["🎤 Música completa (com voz)", "📣 Jingle para anúncio (curto)", "🎹 Instrumental (sem voz)"]
+ESTILOS_MUSICA = ["Sertanejo romântico", "Sertanejo universitário", "Pagode", "Samba", "Forró",
+                  "Piseiro", "Funk", "MPB", "Bossa nova", "Pop", "Rock", "Gospel / louvor",
+                  "Axé", "Reggae", "Rap / hip-hop", "Eletrônica", "Trap", "Arrocha", "Brega",
+                  "Música infantil", "Lo-fi", "Trilha cinematográfica", "Outro (escrever)"]
+VOZES_MUSICA = ["Masculina", "Feminina", "Dupla (masculina e feminina)", "Dupla sertaneja (duas vozes masculinas)",
+                "Coral / várias vozes", "Infantil"]
+# modelo da fal → (nome na tela, preço em US$, tipo de cobrança, duração máxima em segundos)
+MODELOS_MUSICA = {
+    "fal-ai/minimax-music/v2.6": ("⭐ MiniMax Music 2.6 — melhor qualidade de voz", 0.15, "musica", None),
+    "fal-ai/ace-step-1.5": ("💰 ACE-Step 1.5 — mais barato, controla a duração", 0.0006, "segundo", 600),
+    "minimax/music-3": ("⏱️ MiniMax Music 3 — músicas longas, até 5 minutos", 0.002, "segundo", 300),
+}
+# para o instrumental grátis: estilo musical → trilha sintetizada mais parecida
+ESTILO_PARA_SINTESE = {"Sertanejo romântico": "Emocional", "Sertanejo universitário": "Animada",
+                       "Pagode": "Animada", "Samba": "Festa", "Forró": "Festa", "Piseiro": "Festa",
+                       "Funk": "Eletrônica", "MPB": "Calma", "Bossa nova": "Lo-fi", "Pop": "Animada",
+                       "Rock": "Épica", "Gospel / louvor": "Emocional", "Axé": "Festa",
+                       "Reggae": "Lo-fi", "Rap / hip-hop": "Lo-fi", "Eletrônica": "Eletrônica",
+                       "Trap": "Eletrônica", "Arrocha": "Emocional", "Brega": "Emocional",
+                       "Música infantil": "Animada", "Lo-fi": "Lo-fi",
+                       "Trilha cinematográfica": "Épica"}
+MUSICAS_CRIADAS_GLOBAL = {}  # "🎤 título · hash" -> bytes (para usar a música no vídeo grátis)
+
+
+def registrar_musica_criada(titulo, dados):
+    rotulo = f"🎤 {titulo[:40]} · {hashlib.sha1(dados).hexdigest()[:6]}"
+    MUSICAS_ENVIADAS[rotulo] = dados
+    return rotulo
+
+
+def musicas_do_usuario():
+    """Músicas criadas no Estúdio Musical, prontas para escolher nos vídeos grátis."""
+    rotulos = []
+    for m in st.session_state.get("musicas_criadas", []):
+        if m["rotulo"] not in MUSICAS_ENVIADAS:
+            MUSICAS_ENVIADAS[m["rotulo"]] = m["dados"]
+        rotulos.append(m["rotulo"])
+    return rotulos
+
+
+def opcoes_musica():
+    return MUSICAS[:-1] + musicas_do_usuario() + ["Sem música"]
+
+
+def escrever_letra(tipo, estilo, voz, tema, duracao, extras):
+    """Groq (grátis): título, letra com marcações de estrutura, cifra e descrição do estilo."""
+    estrofes = "intro, 1 verso curto, refrão (repetir 2x) e final" if duracao <= 45 else \
+        "intro, 2 versos, pré-refrão, refrão, ponte e refrão final" if duracao <= 150 else \
+        "intro, 3 versos, pré-refrão, refrão repetido, solo, ponte e refrão final"
+    sistema = (
+        "Você é compositor brasileiro profissional. Crie uma música ORIGINAL em português do Brasil. "
+        "Nunca copie letras existentes, nunca cite cantores, bandas ou músicas reais, e se o pedido "
+        "citar algum, ignore o nome e use só o estilo musical. Responda SOMENTE em JSON com as chaves:\n"
+        '"titulo": título curto;\n'
+        '"letra": a letra com as marcações de estrutura em inglês, cada uma sozinha na linha: '
+        "[Intro], [Verse], [Pre Chorus], [Chorus], [Bridge], [Solo], [Outro]; versos em português, "
+        "rimados, fáceis de cantar;\n"
+        '"cifra": a mesma letra com os acordes (ex.: G, D/F#, Em, C) em cima dos versos, para violão;\n'
+        '"tom": tom sugerido (ex.: G maior); "bpm": número;\n'
+        '"estilo_en": descrição em INGLÊS para uma IA de música (máx. 400 caracteres): gênero '
+        "brasileiro, instrumentos típicos, andamento em BPM, clima, tipo de voz, \"Brazilian Portuguese "
+        "vocals\". Sem nomes de artistas.\n"
+        f"Estrutura: {estrofes}. Duração aproximada: {duracao} segundos.")
+    if tipo.startswith("📣"):
+        sistema += (" É um JINGLE de propaganda: refrão chiclete, repita o nome da empresa/produto "
+                    "e termine com a chamada para ação.")
+    if tipo.startswith("🎹"):
+        sistema += (" É INSTRUMENTAL: a letra deve ser só '[Instrumental]' e a cifra traz a "
+                    "sequência de acordes por parte (intro, A, B, final).")
+    pedido = f"Tipo: {tipo}\nEstilo: {estilo}\nVoz: {voz}\nTema: {tema}\n" + \
+             (f"Detalhes: {extras}\n" if extras.strip() else "")
+    resp = extrair_json(chat_groq([{"role": "system", "content": sistema},
+                                   {"role": "user", "content": pedido}], json_mode=True, temperatura=0.9))
+    for k in ("titulo", "letra", "cifra", "tom", "estilo_en"):
+        resp[k] = str(resp.get(k) or "").strip()
+    try:
+        resp["bpm"] = int(float(resp.get("bpm") or 0)) or None
+    except (TypeError, ValueError):
+        resp["bpm"] = None
+    return resp
+
+
+def para_mp3(dados, estereo=True):
+    proc = subprocess.run([FFMPEG, "-loglevel", "error", "-i", "pipe:0", "-ac", "2" if estereo else "1",
+                           "-b:a", "192k", "-f", "mp3", "pipe:1"],
+                          input=dados, capture_output=True, timeout=180)
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError("Não consegui converter a música para MP3.")
+    return proc.stdout
+
+
+def amostras_para_mp3(audio):
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+    return para_mp3(buf.getvalue(), estereo=False)
+
+
+def instrumental_gratis(estilo, segundos):
+    base = ESTILO_PARA_SINTESE.get(estilo, "Animada")
+    a = musica_estilo(segundos, base, semente=11)
+    f = int(min(2.0, segundos / 4) * SR)
+    if f and len(a) > 2 * f:
+        a[:f] *= np.linspace(0, 1, f)
+        a[-f:] *= np.linspace(1, 0, f)
+    pico = float(np.abs(a).max()) or 1.0
+    return (a * (0.85 / pico)).astype(np.float32)
+
+
+def cantar_por_cima(voz_bytes, estilo):
+    """Mistura a voz gravada pela pessoa com o instrumental grátis."""
+    voz = decodificar_audio(voz_bytes)
+    if voz is None or not len(voz):
+        raise RuntimeError("Não consegui ler a gravação. Tente gravar de novo.")
+    voz = voz / (float(np.abs(voz).max()) or 1.0) * 0.9
+    fundo = instrumental_gratis(estilo, len(voz) / SR + 2.0) * 0.35
+    fundo[:len(voz)] += voz
+    pico = float(np.abs(fundo).max()) or 1.0
+    return fundo * (0.95 / pico) if pico > 1 else fundo
+
+
+def custo_musica(modelo, segundos):
+    _, preco, cobranca, _ = MODELOS_MUSICA[modelo]
+    usd = preco if cobranca == "musica" else preco * segundos
+    return f"≈ US\\$ {usd:.2f} (≈ R\\$ {usd * COTACAO_DOLAR:.2f})".replace(".", ",")
+
+
+def argumentos_musica(modelo, letra, estilo_en, segundos, instrumental, bpm):
+    if modelo == "fal-ai/minimax-music/v2.6":
+        a = {"prompt": estilo_en[:2000] or "Brazilian pop song", "is_instrumental": instrumental}
+        if not instrumental:
+            a["lyrics"] = letra[:3500]
+        return a
+    if modelo == "fal-ai/ace-step-1.5":
+        a = {"prompt": estilo_en[:512], "lyrics": "[Instrumental]" if instrumental else letra[:4096],
+             "duration": float(min(600, max(10, segundos))), "vocal_language": "pt"}
+        if bpm and 30 <= bpm <= 300:
+            a["bpm"] = bpm
+        return a
+    letra3 = "[instrumental]" if instrumental else re.sub(
+        r"\[(Intro|Verse|Pre Chorus|Chorus|Post Chorus|Bridge|Solo|Outro|Instrumental)\]",
+        lambda m: "[" + m.group(1).lower().replace(" ", "-") + "]", letra)
+    return {"prompt": estilo_en, "lyrics": letra3, "duration": float(min(300, max(10, segundos)))}
+
+
+def guardar_musica(titulo, dados, origem, letra=""):
+    lista = st.session_state.setdefault("musicas_criadas", [])
+    rotulo = registrar_musica_criada(titulo, dados)
+    lista.insert(0, {"titulo": titulo, "dados": dados, "origem": origem, "letra": letra,
+                     "rotulo": rotulo, "quando": time.strftime("%d/%m %H:%M")})
+    return rotulo
+
+
+def mostrar_musica(m, k, prefixo):
+    st.markdown(f"**{m['titulo']}** · {m['origem']} · {m['quando']}")
+    st.audio(m["dados"], format="audio/mp3")
+    b1, b2 = st.columns(2)
+    nome = re.sub(r"[^\w\- ]", "", m["titulo"]).strip().replace(" ", "_") or "musica"
+    b1.download_button("⬇️ Baixar MP3", m["dados"], file_name=f"{nome}.mp3", mime="audio/mpeg",
+                       key=f"{prefixo}_baixar_{k}", width="stretch")
+    if b2.button("🗑️ Apagar", key=f"{prefixo}_apagar_{k}", width="stretch"):
+        st.session_state.musicas_criadas.remove(m)
+        st.rerun()
+
+
+def aba_musica():
+    st.subheader("🎤 Estúdio Musical IA — Crie suas próprias músicas")
+    st.caption("Descreva a música do seu jeito. A letra, a cifra e um instrumental simples são "
+               "grátis. A música cantada de verdade, com arranjo profissional, é feita pela IA "
+               "da fal.ai por centavos — sem mensalidade.")
+    r = st.session_state.rodada
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        tipo = c1.selectbox("Tipo", TIPOS_MUSICA, key=f"m_tipo_{r}")
+        estilo = c2.selectbox("Estilo", ESTILOS_MUSICA, key=f"m_estilo_{r}")
+        if estilo.startswith("Outro"):
+            estilo = st.text_input("Qual estilo?", placeholder="Ex.: modão de viola, tecnobrega…",
+                                   key=f"m_estilo_livre_{r}") or "Pop brasileiro"
+        c3, c4 = st.columns(2)
+        sem_voz = tipo.startswith("🎹")
+        voz = c3.selectbox("Voz", VOZES_MUSICA, key=f"m_voz_{r}", disabled=sem_voz)
+        padrao = 30 if tipo.startswith("📣") else 120
+        duracao = c4.slider("Duração aproximada (segundos)", 15, 300, padrao, 15, key=f"m_dur_{r}_{tipo[:2]}",
+                            help="2 minutos = 120 segundos.")
+        tema = st.text_input("Tema", placeholder="Ex.: amor e saudade · aniversário da minha mãe · "
+                             "promoção da Pizzaria do Zé", key=f"m_tema_{r}")
+        extras = st.text_area("Detalhes (opcional)", height=70, key=f"m_extras_{r}",
+                              placeholder="Ex.: nome da pessoa ou da empresa, uma frase que não pode "
+                                          "faltar, se é alegre ou triste…")
+        st.caption("🚫 Não use nomes de cantores ou de músicas famosas — a IA cria uma música "
+                   "original no estilo escolhido.")
+        if st.button("📝 Criar letra e cifra (grátis)", type="primary", key=f"m_letra_btn_{r}"):
+            if not tema.strip():
+                st.warning("Escreva o tema da música.")
+            else:
+                with st.spinner("A IA está compondo a letra…"):
+                    try:
+                        st.session_state[f"m_res_{r}"] = escrever_letra(
+                            tipo, estilo, "sem voz" if sem_voz else voz, tema, duracao, extras)
+                        st.session_state[f"m_letra_v_{r}"] = st.session_state.get(f"m_letra_v_{r}", 0) + 1
+                    except Exception as e:
+                        st.error(f"Não foi possível criar a letra: {e}")
+
+    res = st.session_state.get(f"m_res_{r}")
+    if not res:
+        st.info("👆 Preencha e toque em **Criar letra e cifra**. Depois você escolhe: ouvir um "
+                "instrumental grátis, cantar por cima, ou mandar a IA cantar a música inteira.")
+        mostrar_minhas_musicas()
+        return
+    v = st.session_state.get(f"m_letra_v_{r}", 0)
+    st.markdown(f"### 🎵 {res['titulo'] or 'Sua música'}")
+    info = " · ".join(x for x in [f"Tom: {res['tom']}" if res['tom'] else "",
+                                  f"{res['bpm']} BPM" if res['bpm'] else ""] if x)
+    if info:
+        st.caption(info)
+    letra = st.text_area("Letra — edite à vontade (as marcações [Verse], [Chorus]… mostram as partes "
+                         "da música para a IA)", value=res["letra"], height=320, key=f"m_letra_{r}_{v}")
+    with st.expander("🎸 Cifra (acordes para violão/teclado)"):
+        st.code(res["cifra"] or "—", language=None)
+    texto_txt = f"{res['titulo']}\n\n{letra}\n\n--- CIFRA ---\n{res['cifra']}\n"
+    st.download_button("⬇️ Baixar letra e cifra (.txt)", texto_txt.encode("utf-8"),
+                       file_name="letra_e_cifra.txt", mime="text/plain", key=f"m_baixar_txt_{r}")
+
+    g, p = st.tabs(["🎁 Grátis", "💎 Música cantada pela IA"])
+    with g:
+        st.markdown("**🎹 Instrumental simples** — um fundo musical criado pelo próprio app, "
+                    "no clima do estilo escolhido.")
+        if st.button("🎹 Criar instrumental grátis", key=f"m_inst_{r}"):
+            with st.spinner("Criando o instrumental…"):
+                dados = amostras_para_mp3(instrumental_gratis(estilo, duracao))
+                guardar_musica(f"{res['titulo'] or 'Instrumental'} (instrumental)", dados, "🎁 grátis")
+                st.rerun()
+        st.divider()
+        st.markdown("**🎙️ Cante por cima** — grave você cantando a letra; o app junta sua voz "
+                    "com o instrumental.")
+        gravado = st.audio_input("Toque no microfone e cante", key=f"m_gravar_{r}")
+        if gravado and st.button("🎚️ Juntar minha voz com o instrumental", key=f"m_juntar_{r}"):
+            with st.spinner("Mixando…"):
+                try:
+                    dados = amostras_para_mp3(cantar_por_cima(gravado.getvalue(), estilo))
+                    guardar_musica(f"{res['titulo'] or 'Minha música'} (minha voz)", dados, "🎁 grátis")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+    with p:
+        if not chave_fal():
+            st.caption("A música cantada usa a mesma chave fal.ai dos vídeos ultra profissionais.")
+            conectar_fal("m")
+        else:
+            modelo = st.radio("Qual IA vai cantar?", list(MODELOS_MUSICA),
+                              format_func=lambda m: MODELOS_MUSICA[m][0], key=f"m_modelo_{r}")
+            nome_m, _, cobranca, maximo = MODELOS_MUSICA[modelo]
+            seg = min(duracao, maximo) if maximo else duracao
+            if cobranca == "musica":
+                st.caption("Este modelo decide o tamanho pela letra: letra maior, música maior.")
+            st.markdown(f"💰 Custo estimado: **{custo_musica(modelo, seg)}** — cobrado na sua "
+                        "conta fal.ai.")
+            atalho_creditos("fal", f"m_cred_{r}")
+            if st.button("🎤 Criar música cantada", type="primary", key=f"m_fal_{r}"):
+                barra = st.progress(0, text="Enviando para a IA…")
+                try:
+                    url = gerar_fal(modelo, argumentos_musica(modelo, letra, res["estilo_en"], seg,
+                                                              tipo.startswith("🎹"), res["bpm"]),
+                                    barra, limite=900, campo="audio", rotulo="Compondo sua música")
+                    bruto = baixar_bytes(url)
+                    if not bruto:
+                        raise RuntimeError("A música ficou pronta, mas não consegui baixá-la. "
+                                           f"Ouça e baixe por aqui: {url}")
+                    dados = para_mp3(bruto)
+                    guardar_musica(res["titulo"] or "Minha música", dados,
+                                   "💎 " + nome_m.split("—")[0].strip(), letra)
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+            st.caption("Cada criação sai diferente. Se não gostar, gere de novo — ou mude o "
+                       "estilo e a letra.")
+    mostrar_minhas_musicas()
+
+
+def mostrar_minhas_musicas():
+    lista = st.session_state.get("musicas_criadas", [])
+    if not lista:
+        return
+    st.markdown("### 🎧 Minhas músicas")
+    st.caption("Elas também aparecem na lista de **Música** do vídeo grátis (com 🎤) para virar "
+               "trilha do seu anúncio. Baixe as que quiser guardar: ao sair do app, elas somem.")
+    for k, m in enumerate(list(lista)):
+        with st.container(border=True):
+            mostrar_musica(m, k, "m")
 
 
 def aba_pago():
@@ -4211,7 +4511,23 @@ def aba_tutorial():
             "receba nota, pontos fracos e sugestões.\n"
             "4. Leia a **cartilha completa** — do primeiro anúncio ao checklist final."
         )
-    with st.expander("7. Dicas para vídeos que vendem"):
+    with st.expander("7. 🎤 Estúdio Musical IA — criar suas músicas"):
+        st.markdown(
+            "1. Abra a aba **🎤 Estúdio Musical IA** e preencha: **tipo** (música completa, jingle "
+            "ou instrumental), **estilo** (sertanejo, pagode, gospel…), **voz**, **tema** e "
+            "**duração**.\n"
+            "2. Toque em **📝 Criar letra e cifra (grátis)**. A IA escreve uma letra original, com "
+            "os acordes. Edite a letra à vontade e baixe em .txt.\n"
+            "3. **🎁 Grátis:** crie um **instrumental simples** ou **cante por cima** — grave sua voz "
+            "no microfone e o app junta com o instrumental.\n"
+            "4. **💎 Música cantada pela IA:** com a chave fal.ai, escolha a IA (MiniMax 2.6 = "
+            "melhor voz; ACE-Step = mais barato; MiniMax 3 = músicas longas), veja o custo "
+            "estimado e toque em **🎤 Criar música cantada**. Leva de 1 a 3 minutos.\n"
+            "5. Ouça, **⬇️ baixe o MP3** e, se quiser, use a música no vídeo grátis: ela aparece "
+            "na lista de **Música** com 🎤.\n"
+            "6. Não use nomes de cantores ou de músicas famosas: a IA cria músicas originais. "
+            "Baixe as músicas que quiser guardar — ao sair do app elas somem.")
+    with st.expander("8. Dicas para vídeos que vendem"):
         st.markdown(
             "- Comece com um gancho forte na primeira cena.\n"
             "- Textos de tela curtos: até 7 palavras.\n"
@@ -4220,7 +4536,7 @@ def aba_tutorial():
             "- Vertical 9:16 funciona melhor em Reels, TikTok e Status.\n"
             "- Peça ideias ao **Assistente IA**."
         )
-    with st.expander("8. Problemas comuns"):
+    with st.expander("9. Problemas comuns"):
         st.markdown(
             "- **Chave Groq inválida:** copie a chave inteira (gsk_…). Se perdeu, crie outra.\n"
             "- **Limite da Groq:** a chave grátis tem limite por minuto; espere um pouco.\n"
@@ -4245,19 +4561,22 @@ def app():
         for k in list(st.session_state.keys()):
             del st.session_state[k]
         st.rerun()
-    abas = st.tabs(["🎁 Criar vídeo grátis", "💎 Criar vídeos ultra profissionais", "📁 Meus vídeos",
+    abas = st.tabs(["🎁 Criar vídeo grátis", "💎 Criar vídeos ultra profissionais",
+                    "🎤 Estúdio Musical IA", "📁 Meus vídeos",
                     "📈 Aprenda a anunciar", "🤖 Assistente IA", "📚 Tutorial"])
     with abas[0]:
         aba_gratis()
     with abas[1]:
         aba_pago()
     with abas[2]:
-        aba_galeria()
+        aba_musica()
     with abas[3]:
-        aba_aprenda()
+        aba_galeria()
     with abas[4]:
-        aba_assistente()
+        aba_aprenda()
     with abas[5]:
+        aba_assistente()
+    with abas[6]:
         aba_tutorial()
 
 
