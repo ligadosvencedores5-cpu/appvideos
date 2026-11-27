@@ -1219,8 +1219,9 @@ def aplicar_transicao(a, b, m, tipo, W, H, semente=0):
 
 
 # ---------------- áudio ----------------
-def decodificar_audio(dados, acelerar=1.0, tom=0.0):
-    """Converte qualquer áudio em amostras. 'tom' muda a altura da voz em semitons."""
+def decodificar_audio(dados, acelerar=1.0, tom=0.0, efeito=""):
+    """Converte qualquer áudio em amostras. 'tom' muda a altura da voz em semitons;
+    'efeito' é uma cadeia de filtros do ffmpeg (timbre, eco…)."""
     if not FFMPEG:
         return None
     filtros = []
@@ -1229,6 +1230,8 @@ def decodificar_audio(dados, acelerar=1.0, tom=0.0):
         filtros.append(f"asetrate={int(24000 * f)},aresample=24000,atempo={1 / f:.4f}")
     if abs(acelerar - 1) > 0.01:
         filtros.append(f"atempo={acelerar}")
+    if efeito:
+        filtros.append(efeito)
     filtro = ["-filter:a", ",".join(filtros)] if filtros else []
     proc = subprocess.run([FFMPEG, "-loglevel", "error", "-i", "pipe:0", *filtro,
                            "-f", "s16le", "-ac", "1", "-ar", str(SR), "pipe:1"],
@@ -1242,6 +1245,8 @@ VOZES = {
     "👩 Francisca — feminina, calorosa": "pt-BR-FranciscaNeural",
     "👨 Antônio — masculina, firme": "pt-BR-AntonioNeural",
     "👩 Thalita — feminina, jovem": "pt-BR-ThalitaMultilingualNeural",
+    "📻 Locutor nostálgico — grave e caloroso, rádio anos 80": "pt-BR-AntonioNeural#locutor80",
+    "🎬 Voz de trailer — grave, pausada e dramática": "pt-BR-AntonioNeural#trailer",
     "🔈 Google — simples": None,
     "🎙️ Minha própria voz (gravar ou enviar áudio)": "MINHA_VOZ",
 }
@@ -1250,15 +1255,47 @@ VELOCIDADES = {"Normal": "+0%", "Rápida": "+10%", "Bem rápida": "+20%"}
 # (voz do Google com altura ajustada), para as opções nunca ficarem iguais.
 TOM_RESERVA = {"pt-BR-FranciscaNeural": 0.0, "pt-BR-AntonioNeural": -5.5,
                "pt-BR-ThalitaMultilingualNeural": 2.0}
+# vozes com "personagem": voz base + ajuste de ritmo/altura + efeito de som (ffmpeg)
+VOZ_PRESETS = {
+    # locutor de rádio dos anos 80: um pouco mais lento e grave, timbre quente, leve eco de estúdio
+    "locutor80": {"amostra": "Lembra dos anos oitenta? Aperte o play e faça essa viagem com a gente!",
+                  "rate": -7, "pitch": "-5Hz", "tom_reserva": -6.0,
+                  "filtro": "highpass=f=80,lowpass=f=7500,equalizer=f=160:t=q:w=1.2:g=5,"
+                            "equalizer=f=3000:t=q:w=1.5:g=2,"
+                            "acompressor=threshold=-20dB:ratio=3.5:attack=5:release=90:makeup=2,"
+                            "aecho=0.85:0.5:38:0.16"},
+    # trailer de cinema: bem grave, pausado, com sala grande
+    "trailer": {"amostra": "Neste verão… uma história que vai mudar tudo. Prepare-se.",
+                "rate": -14, "pitch": "-12Hz", "tom_reserva": -8.0,
+                "filtro": "highpass=f=60,equalizer=f=110:t=q:w=1:g=7,equalizer=f=2500:t=q:w=1.5:g=2,"
+                          "acompressor=threshold=-22dB:ratio=4:attack=4:release=120:makeup=3,"
+                          "aecho=0.8:0.65:70|140:0.22|0.12"},
+}
+
+
+def separar_voz(voz):
+    """'pt-BR-AntonioNeural#trailer' -> ('pt-BR-AntonioNeural', {preset})"""
+    base, _, nome = str(voz or "").partition("#")
+    return base, VOZ_PRESETS.get(nome, {})
+
+
+def somar_velocidade(velocidade, extra):
+    try:
+        v = int(str(velocidade).replace("%", "")) + int(extra or 0)
+    except ValueError:
+        v = int(extra or 0)
+    return f"{v:+d}%"
+
+
 ESTADO_VOZ = {"reserva": False, "erro": "", "fora_ate": 0.0, "ultimo_erro": ""}
 
 
-def _voz_google(texto, acelerar, tom=0.0):
+def _voz_google(texto, acelerar, tom=0.0, efeito=""):
     if not gTTS:
         return None
     buf = io.BytesIO()
     gTTS(texto, lang="pt", tld="com.br").write_to_fp(buf)
-    return decodificar_audio(buf.getvalue(), acelerar=acelerar, tom=tom)
+    return decodificar_audio(buf.getvalue(), acelerar=acelerar, tom=tom, efeito=efeito)
 
 
 def _voz_microsoft(texto, voz, velocidade, palavras=None):
@@ -1268,13 +1305,17 @@ def _voz_microsoft(texto, voz, velocidade, palavras=None):
         return None, "a biblioteca edge-tts não está instalada no servidor"
     if time.time() < ESTADO_VOZ["fora_ate"]:  # falhou há pouco: não espera de novo
         return None, ESTADO_VOZ["ultimo_erro"]
+    voz, preset = separar_voz(voz)
+    velocidade = somar_velocidade(velocidade, preset.get("rate", 0))
+    tom_hz = preset.get("pitch", "+0Hz")
 
     def baixar():
         try:
-            com = edge_tts.Communicate(texto, voz, rate=velocidade, boundary="WordBoundary",
+            com = edge_tts.Communicate(texto, voz, rate=velocidade, pitch=tom_hz,
+                                       boundary="WordBoundary",
                                        connect_timeout=6, receive_timeout=20)
         except TypeError:  # versões antigas já mandam as palavras por padrão
-            com = edge_tts.Communicate(texto, voz, rate=velocidade,
+            com = edge_tts.Communicate(texto, voz, rate=velocidade, pitch=tom_hz,
                                        connect_timeout=6, receive_timeout=20)
         partes, pals = [], []
         for p in com.stream_sync():
@@ -1298,7 +1339,7 @@ def _voz_microsoft(texto, voz, velocidade, palavras=None):
         ex.shutdown(wait=False)
     if not dados:
         return None, "o serviço de vozes não devolveu áudio"
-    audio = decodificar_audio(dados)
+    audio = decodificar_audio(dados, efeito=preset.get("filtro", ""))
     if audio is None or len(audio) < SR // 4:
         return None, "o áudio recebido veio vazio"
     return audio, ""
@@ -1333,7 +1374,11 @@ def narrar_tempos(texto, voz=None, velocidade="+0%"):
         ESTADO_VOZ["reserva"] = True
         ESTADO_VOZ["erro"] = erro
     acelerar = {"+0%": 1.1, "+10%": 1.22, "+20%": 1.35}.get(velocidade, 1.1)
-    audio = _voz_google(texto, acelerar, TOM_RESERVA.get(voz, 0.0))
+    base, preset = separar_voz(voz)
+    if preset:
+        acelerar *= 1 + preset.get("rate", 0) / 100
+    audio = _voz_google(texto, acelerar, preset.get("tom_reserva", TOM_RESERVA.get(base, 0.0)),
+                        preset.get("filtro", ""))
     if audio is None:
         return None, []
     return audio, estimar_tempos(texto, len(audio) / SR)
@@ -1372,8 +1417,9 @@ def preparar_voz_propria(dados):
 def amostra_voz(voz, velocidade):
     """Áudio curto para a pessoa ouvir a voz antes de criar o vídeo (WAV em bytes)."""
     ESTADO_VOZ["reserva"], ESTADO_VOZ["erro"] = False, ""
-    audio = narrar("Olá! Esta é a voz do seu anúncio. Fale com a gente e aproveite!",
-                   voz, velocidade)
+    frase = separar_voz(voz)[1].get("amostra") or \
+        "Olá! Esta é a voz do seu anúncio. Fale com a gente e aproveite!"
+    audio = narrar(frase, voz, velocidade)
     motor = ESTADO_VOZ["erro"] if ESTADO_VOZ["reserva"] else ""
     if audio is None:
         return None, motor
