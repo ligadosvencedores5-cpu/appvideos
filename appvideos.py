@@ -1764,6 +1764,9 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         minimo = opc["dur_min"] if i < len(cenas) else 3.6
         if i < len(cenas) and segundos_validos(cenas[i].get("segundos")):
             minimo = segundos_validos(cenas[i].get("segundos"))
+        extras_i = (opc.get("fotos_extras_cena") or [])
+        if i < len(cenas) and i < len(extras_i) and extras_i[i]:
+            minimo = max(minimo, 1.7 * (len(extras_i[i]) + 1) + 0.5)  # tempo para ver cada foto
         voz = narracoes[i]
         duracoes.append(max(minimo, (len(voz) / SR + 0.9) if voz is not None else 0))
     if voz_propria is not None:
@@ -1885,8 +1888,12 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
         else:
             img = imagens[i] if imagens[i] is not None else arte_fundo(W, H, tema, i * 31 + 5)
             base = ImageOps.fit(img.convert("RGB"), (int(W * S), int(H * S)), Image.LANCZOS)
+        extras = (opc.get("fotos_extras_cena") or [])
+        extras = extras[i] if i < len(extras) and not videos[i] else []
+        bases = [base] + [ImageOps.fit(im.convert("RGB"), (int(W * S), int(H * S)), Image.LANCZOS)
+                          for im in extras if im is not None] if base is not None else []
         txt = cena.get("texto_tela", "")
-        blocos.append(dict(base=base, video=videos[i], fonte=None,
+        blocos.append(dict(base=base, bases=bases, video=videos[i], fonte=None,
                            dur=duracoes[i], inicio=inicio, zoom_in=(i % 2 == 0),
                            pan=((-1) ** i * 0.6, (-1) ** (i // 2) * 0.4), txt=txt,
                            texto=para_arrays(camada_texto_cena(W, H, tema, txt, topo=legendas)),
@@ -1972,21 +1979,41 @@ def criar_video_gratis(cenas, opc, fotos, progresso):
             af = a[:, src] * f
             arr[y0:y1, dst] = arr[y0:y1, dst] * (1 - af) + rgb[:, src] * af
 
+    def fundo_foto(base, p, zoom_in, pan):
+        BW, BH = base.size
+        z = 1 + (S - 1) * suave(p) if zoom_in else S - (S - 1) * suave(p)
+        ww, wh = BW / z, BH / z
+        mx, my = (BW - ww) / 2, (BH - wh) / 2
+        cx = BW / 2 + pan[0] * mx * (p * 2 - 1)
+        cy = BH / 2 + pan[1] * my * (p * 2 - 1)
+        caixa = (cx - ww / 2, cy - wh / 2, cx + ww / 2, cy + wh / 2)
+        return np.asarray(base.resize((W, H), Image.BILINEAR, box=caixa), dtype=np.float32)
+
     def quadro_cena(b, tl):
         p = max(0.0, min(1.0, tl / b["dur"]))
         if b["video"]:
             if b["fonte"] is None:
                 b["fonte"] = FonteVideo(b["video"], W, H)
             arr = b["fonte"].quadro(max(0, int(tl * FPS)))
+        elif len(b.get("bases") or []) > 1:
+            # várias fotos na mesma cena: dividem o tempo, cada uma com seu movimento,
+            # trocando com um fundido rápido — o texto, a narração e a música continuam
+            n = len(b["bases"])
+            seg = max(0.4, (b["dur"] - T) / n)
+            j = min(n - 1, int(tl / seg))
+            X = min(0.35, seg * 0.4)
+
+            def foto(k):
+                pk = max(0.0, min(1.0, (tl - k * seg) / (seg + T)))
+                pan = (b["pan"][0] * (-1) ** k, b["pan"][1] * (-1) ** (k // 2))
+                return fundo_foto(b["bases"][k], pk, b["zoom_in"] != (k % 2 == 1), pan)
+            arr = foto(j)
+            inicio_troca = (j + 1) * seg - X
+            if j + 1 < n and tl > inicio_troca:
+                f = suave(min(1.0, (tl - inicio_troca) / X))
+                arr = arr * (1 - f) + foto(j + 1) * f
         else:
-            BW, BH = b["base"].size
-            z = 1 + (S - 1) * suave(p) if b["zoom_in"] else S - (S - 1) * suave(p)
-            ww, wh = BW / z, BH / z
-            mx, my = (BW - ww) / 2, (BH - wh) / 2
-            cx = BW / 2 + b["pan"][0] * mx * (p * 2 - 1)
-            cy = BH / 2 + b["pan"][1] * my * (p * 2 - 1)
-            caixa = (cx - ww / 2, cy - wh / 2, cx + ww / 2, cy + wh / 2)
-            arr = np.asarray(b["base"].resize((W, H), Image.BILINEAR, box=caixa), dtype=np.float32)
+            arr = fundo_foto(b["base"], p, b["zoom_in"], b["pan"])
         if b["sombra"]:
             arr = arr * (1 - sombra)
         if b["marca"] and marca_arr:
@@ -2897,7 +2924,9 @@ def aba_gratis():
         .st-key-g_col_fotos > div:first-child, .st-key-g_col_musicas > div:first-child{height:36px;min-height:36px}
         .st-key-g_col_fotos button, .st-key-g_col_musicas button{height:36px;min-height:36px;
             margin-top:2px;padding:0 .3rem;border-radius:18px;width:100%;justify-content:center}
-        .st-key-g_col_fotos button p, .st-key-g_col_musicas button p{font-size:1rem}
+        .st-key-g_col_fotos button p, .st-key-g_col_musicas button p{font-size:.95rem;white-space:nowrap}
+        .st-key-g_col_fotos button [data-testid="stIconMaterial"],
+        .st-key-g_col_musicas button [data-testid="stIconMaterial"]{display:none}
         .g-topo-linhas{height:36px}
         </style>""", unsafe_allow_html=True)
         with st.container(key="g_linhas"):
@@ -2931,17 +2960,33 @@ def aba_gratis():
         arq_foto, arq_mus = {}, {}
         with col_f.container(key="g_col_fotos"):
             st.markdown("<div class='g-topo-linhas'></div>", unsafe_allow_html=True)
+            rotulos_extra = [x for x in ops_foto if x != FOTO_AUTO]
             for k in range(len(editado)):
-                f_atual = st.session_state.get(f"g_upf_{k}_{r_}")
-                with st.popover("✅" if f_atual else "📷", help=f"Foto da cena {k + 1}"):
-                    f = st.file_uploader(f"📷 Foto da cena {k + 1}", type=["jpg", "jpeg", "png", "webp"],
-                                         key=f"g_upf_{k}_{r_}")
-                    if f:
-                        st.image(f, width=160)
-                        st.caption("Esta foto vale para esta cena, no lugar da coluna 🖼️ Foto. "
-                                   "Para tirar, clique no ✕ do arquivo.")
-                if f_atual:
-                    arq_foto[k] = f_atual
+                f_atual = list(st.session_state.get(f"g_upfs_{k}_{r_}") or [])
+                sel_atual = [x for x in (st.session_state.get(f"g_extra_{k}_{r_}") or [])
+                             if x in rotulos_extra]
+                n_f = len(f_atual) + len(sel_atual)
+                rot = "📷" if n_f == 0 else "✅" if n_f == 1 else f"✅{n_f}"
+                with st.popover(rot, help=f"Fotos da cena {k + 1}"):
+                    fs = st.file_uploader(f"📷 Fotos da cena {k + 1} — pode escolher várias",
+                                          type=["jpg", "jpeg", "png", "webp"],
+                                          accept_multiple_files=True, key=f"g_upfs_{k}_{r_}") or []
+                    sel = st.multiselect("➕ Somar fotos do banco ou das já carregadas",
+                                         rotulos_extra, key=f"g_extra_{k}_{r_}")
+                    if fs or sel:
+                        miniaturas = [x for x in fs] + [
+                            miniatura(ops_foto[x][1], ops_foto[x][2]) if ops_foto[x][0] == "banco"
+                            else (fotos_pc[ops_foto[x][1]] if ops_foto[x][0] == "pc"
+                                  else fotos_up[ops_foto[x][1]]) for x in sel]
+                        cols_p = st.columns(4)
+                        for q, im in enumerate(miniaturas):
+                            cols_p[q % 4].image(im, caption=f"{q + 1}ª", width="stretch")
+                    st.caption("Várias fotos na mesma cena aparecem uma depois da outra, com a "
+                               "mesma narração, o mesmo texto e a mesma música. A cena fica um "
+                               "pouco mais longa para dar tempo de ver cada foto. A 1ª foto "
+                               "enviada vale no lugar da coluna 🖼️ Foto. Para tirar, clique no ✕.")
+                if f_atual or sel_atual:
+                    arq_foto[k] = (f_atual, sel_atual)
         with col_m.container(key="g_col_musicas"):
             st.markdown("<div class='g-topo-linhas'></div>", unsafe_allow_html=True)
             for k in range(len(editado)):
@@ -2959,7 +3004,10 @@ def aba_gratis():
         for k, linha in enumerate(editado):
             c = normalizar_cena(linha)
             if k in arq_foto:
-                c["_foto_arquivo"] = arq_foto[k]
+                enviados, somados = arq_foto[k]
+                if enviados:
+                    c["_foto_arquivo"] = enviados[0]
+                c["_fotos_extra"] = list(enviados[1:]) + list(somados)
             if k in arq_mus:
                 c["_musica_arquivo"] = arq_mus[k]
             if not cena_vazia(c) or k in arq_foto or k in arq_mus:
@@ -2997,7 +3045,8 @@ def aba_gratis():
                                             "border-radius:8px;display:flex;align-items:center;"
                                             "justify-content:center;font-size:.8rem;opacity:.7'>"
                                             "Automática</div>", unsafe_allow_html=True)
-                            st.caption(f"Cena {ini + k + 1}")
+                            mais = len(c.get("_fotos_extra") or [])
+                            st.caption(f"Cena {ini + k + 1}" + (f" · +{mais} foto(s)" if mais else ""))
         cr1, cr2 = st.columns(2)
         if cr1.button("↩️ Desfazer minhas edições", key=f"g_desfazer_{st.session_state.rodada}",
                       help="Volta a tabela para o roteiro como estava antes das edições."):
@@ -3067,12 +3116,25 @@ def aba_gratis():
                                   else fotos[ref[1]] if ref and ref[0] == "meu" and ref[1] < len(fotos)
                                   else foto_do_banco(ref[1], ref[2]) if ref and ref[0] == "banco"
                                   else None)
+            def foto_por_rotulo(x):
+                ref = ops_foto.get(x) if not hasattr(x, "getvalue") else None
+                if hasattr(x, "getvalue"):
+                    return Image.open(io.BytesIO(x.getvalue())).convert("RGB")
+                if ref and ref[0] == "pc" and ref[1] < len(fotos_pc):
+                    return Image.open(io.BytesIO(fotos_pc[ref[1]].getvalue())).convert("RGB")
+                if ref and ref[0] == "meu" and ref[1] < len(fotos):
+                    return fotos[ref[1]]
+                if ref and ref[0] == "banco":
+                    return foto_do_banco(ref[1], ref[2])
+                return None
+            fotos_extras_cena = [[im for im in (foto_por_rotulo(x) for x in c.get("_fotos_extra") or [])
+                                  if im is not None] for c in cenas_finais]
             opc = dict(produto=produto.strip(), cta=cta_final, contato=contato, formato=formato,
                        tema=tema, estilo_img=estilo_img, fonte_img=fonte_img, musica=musica,
                        narracao=narracao, dur_min=dur_min, usar_xai=usar_xai,
                        categoria=categoria, descricao=descricao,
                        fotos_banco=list(fotos_escolhidas), musicas_cenas=musicas_cenas,
-                       fotos_cena=fotos_cena,
+                       fotos_cena=fotos_cena, fotos_extras_cena=fotos_extras_cena,
                        voz=VOZES[voz_nome], velocidade=VELOCIDADES[velocidade],
                        audio_proprio=(st.session_state.get("audio_proprio")
                                       if VOZES[voz_nome] == "MINHA_VOZ" else None),
@@ -4473,8 +4535,9 @@ def aba_tutorial():
             "animação do texto e 🔀 transição. A música da chamada final fica logo abaixo. "
             "Use **👀 Ver as fotos de cada cena** para conferir, **↩️ Desfazer minhas edições** "
             "para voltar ao roteiro original e **🧹 Apagar o roteiro** para começar de novo.\n"
-            "   - **Botões ao lado de cada linha:** 📷 à esquerda envia uma foto só para aquela "
-            "cena e 🎵 à direita envia uma música só para aquela cena (MP3, WAV, M4A…). Quando "
+            "   - **Botões ao lado de cada linha:** 📷 à esquerda envia uma ou **várias fotos** só "
+            "para aquela cena (dá para somar fotos do banco também) — elas aparecem uma depois da "
+            "outra com a mesma narração, texto e música; 🎵 à direita envia uma música só para aquela cena (MP3, WAV, M4A…). Quando "
             "tem arquivo, o botão vira ✅ e vale no lugar do que está na tabela.\n"
             "4. Em **✨ Turbinar o vídeo**, escolha:\n"
             "   - **Legendas estilo TikTok** — a frase falada aparece na tela, palavra por "
